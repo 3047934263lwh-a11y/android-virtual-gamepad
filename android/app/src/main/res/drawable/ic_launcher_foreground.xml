@@ -1,0 +1,31 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 白色球体 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,22 a32,32 0 1,0 0.01,0 z" />
+    <!-- 球体左侧阴影，增加立体感 -->
+    <path
+        android:fillColor="#14000000"
+        android:pathData="M54,22 a32,32 0 0,0 -0.01,64 z" />
+    <!-- Xbox 风格 X：两道交叉圆头笔画 -->
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:rotation="45">
+        <path
+            android:fillColor="#107C10"
+            android:pathData="M49.5,26 h9 a5.5,5.5 0 0 1 5.5,5.5 v45 a5.5,5.5 0 0 1 -5.5,5.5 h-9 a5.5,5.5 0 0 1 -5.5,-5.5 v-45 a5.5,5.5 0 0 1 5.5,-5.5 z" />
+    </group>
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:rotation="-45">
+        <path
+            android:fillColor="#107C10"
+            android:pathData="M49.5,26 h9 a5.5,5.5 0 0 1 5.5,5.5 v45 a5.5,5.5 0 0 1 -5.5,5.5 h-9 a5.5,5.5 0 0 1 -5.5,-5.5 v-45 a5.5,5.5 0 0 1 5.5,-5.5 z" />
+    </group>
+</vector>

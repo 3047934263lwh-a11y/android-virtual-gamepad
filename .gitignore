@@ -1,0 +1,32 @@
+# ---- Android 构建产物 ----
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/captures/
+*.apk
+*.aab
+
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+dist/
+pbuild*/
+build/
+spec/
+
+# ---- 打包产物 ----
+*.zip
+*.msi
+
+# ---- 编辑器/系统 ----
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ---- Kotlin 编译器错误日志 ----
+android/.kotlin/
