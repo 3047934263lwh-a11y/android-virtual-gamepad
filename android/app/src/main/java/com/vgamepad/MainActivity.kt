@@ -80,10 +80,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         override fun onPlayerAssigned(playerIndex: Int) {
+            // 接收端会周期性重发编号包（解决启动竞态），只在编号变化时提示一次，
+            // 否则 Toast 会每秒弹出造成"不断闪烁"。
+            val changed = playerNo != playerIndex
             playerNo = playerIndex
+            if (changed) toast("本手机分配为 ${playerIndex}P 手柄")
             statusText.text = "已连接 · ${playerIndex}P"
             statusText.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.ok))
-            toast("本手机分配为 ${playerIndex}P 手柄")
         }
     }
 
