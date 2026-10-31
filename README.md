@@ -478,6 +478,9 @@ PC 端、接收端、游戏全都不用改：
 ## 15. 许可与致谢
 
 - 本项目以 [MIT](LICENSE) 协议开源。
-- 虚拟设备层依赖 [ViGEmBus](https://github.com/nefarius/ViGEmBus)（BSD-3-Clause）
-  与 [Nefarius.ViGEm.Client](https://www.nuget.org/packages/Nefarius.ViGEm.Client)（MIT）。
-- 分发时请保留上述依赖的许可声明。
+- 第三方依赖（各自遵循其原始协议，分发时请保留相应声明）：
+  - [ViGEmBus](https://github.com/nefarius/ViGEmBus) 驱动 —— BSD-3-Clause
+  - [Nefarius.ViGEm.Client](https://www.nuget.org/packages/Nefarius.ViGEm.Client)（C# 客户端）—— MIT
+  - [vgamepad](https://pypi.org/project/vgamepad/)（Python ViGEm 客户端）—— MIT
+  - [pygame](https://www.pygame.org/)（测试游戏渲染）—— LGPL
+  - Material Components for Android / Kotlin / AndroidX —— Apache-2.0
