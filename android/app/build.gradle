@@ -1,21 +1,42 @@
-cGx1Z2lucyB7CiAgICBpZCAnY29tLmFuZHJvaWQuYXBwbGljYXRpb24nCiAg
-ICBpZCAnb3JnLmpldGJyYWlucy5rb3RsaW4uYW5kcm9pZCcKfQoKYW5kcm9p
-ZCB7CiAgICBuYW1lc3BhY2UgJ2NvbS52Z2FtZXBhZCcKICAgIGNvbXBpbGVT
-ZGsgMzUKCiAgICBkZWZhdWx0Q29uZmlnIHsKICAgICAgICBhcHBsaWNhdGlv
-bklkICJjb20udmdhbWVwYWQiCiAgICAgICAgbWluU2RrIDI0CiAgICAgICAg
-dGFyZ2V0U2RrIDM1CiAgICAgICAgdmVyc2lvbkNvZGUgNgogICAgICAgIHZl
-cnNpb25OYW1lICIxLjUiCiAgICB9CgogICAgYnVpbGRUeXBlcyB7CiAgICAg
-ICAgcmVsZWFzZSB7CiAgICAgICAgICAgIG1pbmlmeUVuYWJsZWQgZmFsc2UK
-ICAgICAgICAgICAgcHJvZ3VhcmRGaWxlcyBnZXREZWZhdWx0UHJvZ3VhcmRG
-aWxlKCdwcm9ndWFyZC1hbmRyb2lkLW9wdGltaXplLnR4dCcpLCAncHJvZ3Vh
-cmQtcnVsZXMucHJvJwogICAgICAgIH0KICAgICAgICBkZWJ1ZyB7CiAgICAg
-ICAgICAgIGFwcGxpY2F0aW9uSWRTdWZmaXggIiIKICAgICAgICB9CiAgICB9
-CgogICAgY29tcGlsZU9wdGlvbnMgewogICAgICAgIHNvdXJjZUNvbXBhdGli
-aWxpdHkgSmF2YVZlcnNpb24uVkVSU0lPTl8xNwogICAgICAgIHRhcmdldENv
-bXBhdGliaWxpdHkgSmF2YVZlcnNpb24uVkVSU0lPTl8xNwogICAgfQoKICAg
-IGtvdGxpbk9wdGlvbnMgewogICAgICAgIGp2bVRhcmdldCA9ICcxNycKICAg
-IH0KfQoKZGVwZW5kZW5jaWVzIHsKICAgIGltcGxlbWVudGF0aW9uICdhbmRy
-b2lkeC5jb3JlOmNvcmUta3R4OjEuMTMuMScKICAgIGltcGxlbWVudGF0aW9u
-ICdhbmRyb2lkeC5hcHBjb21wYXQ6YXBwY29tcGF0OjEuNy4wJwogICAgaW1w
-bGVtZW50YXRpb24gJ2NvbS5nb29nbGUuYW5kcm9pZC5tYXRlcmlhbDptYXRl
-cmlhbDoxLjEyLjAnCn0K
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.vgamepad'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.vgamepad"
+        minSdk 24
+        targetSdk 35
+        versionCode 8
+        versionName "1.7.1"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            applicationIdSuffix ""
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'com.google.android.material:material:1.12.0'
+}
