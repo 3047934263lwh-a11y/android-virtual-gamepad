@@ -19,7 +19,7 @@ Use an Android phone as a virtual Xbox 360 controller. Sticks, D-pad, ABXY, bump
 | Per-control editing | Move / resize / set opacity of every control, saved automatically |
 | Dark glass UI | Obsidian layered-glass look, high-contrast colored ABXY letters, press-sink animation |
 | Auto reconnect | The app connects to the last server on launch |
-| **Floating connect drawer** | The top bar is collapsed by default; a small "手柄" tab on the left edge (green dot when connected) slides the bar in/out with a 300 ms ease animation. When collapsed it never intercepts game touches |
+| **Collapsible top bar** | The connect bar collapses to the original "手柄" text at its original spot; tap it to expand rightwards (300 ms ease), tap again to collapse. Collapsed, it occupies one word and never intercepts game touches |
 | One-click launcher | PC script checks dependencies, cleans stale instances, frees the port, starts the receiver |
 | Companion test games | 4 PC games written to test the pad (platformer / twin-stick arena / camera test / 3D walk) |
 
@@ -34,7 +34,7 @@ Games read pads through two paths: **XInput** (`xinput1_4.dll`) and the older **
 1. **Install ViGEmBus** (once): download from the official releases page <https://github.com/nefarius/ViGEmBus/releases>, run as administrator, then **reboot**.
 2. **Start the receiver**: double-click `一键启动.bat` (or `START-RECEIVER.bat` — same script, English messages). It checks Python + the `vgamepad` library (auto-installs if missing), the driver, kills stale instances and starts listening on UDP 26760. Allow it through the firewall for private networks when prompted.
 3. **Build the Android app** (first time only): open the `android/` folder in Android Studio, let Gradle sync, then *Build APK(s)*. Install `app/build/outputs/apk/debug/app-debug.apk` on the phone.
-4. **Connect**: phone and PC on the same Wi-Fi. Tap the **"手柄" tab** on the left edge to slide the connect drawer out, enter the PC's IPv4 address and port `26760`, tap connect. After that the app **auto-connects** on launch. Tap the tab again (or anywhere outside the panel) to collapse it — a green dot on the tab shows the connection is alive. The status bar shows `connected · 125 pps · P1`.
+4. **Connect**: phone and PC on the same Wi-Fi. Tap the **"手柄" text** at the top-left to expand the connect bar, enter the PC's IPv4 address and port `26760`, tap connect. After that the app **auto-connects** on launch. Tap the text again to collapse. The status bar shows `connected · 125 pps · P1`.
 5. **Verify**: press `Win+R`, run `joy.cpl` — "Xbox 360 Controller for Windows" must be listed. Test sticks/buttons in its Properties panel.
 6. **Start the game** after the receiver is running (games enumerate pads at startup). For Steam games, set *Steam Input* to *Disabled* for that title.
 
