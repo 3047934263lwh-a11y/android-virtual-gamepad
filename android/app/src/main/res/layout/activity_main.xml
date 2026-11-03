@@ -10,6 +10,16 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <!-- 抽屉展开时的点击外部关闭遮罩：收起状态 GONE，绝不拦截游戏触控 -->
+    <View
+        android:id="@+id/drawerScrim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#2E000000"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone" />
+
     <LinearLayout
         android:id="@+id/connBar"
         android:layout_width="match_parent"
@@ -26,7 +36,8 @@
         android:paddingStart="12dp"
         android:paddingTop="6dp"
         android:paddingEnd="10dp"
-        android:paddingBottom="6dp">
+        android:paddingBottom="6dp"
+        android:visibility="invisible">
 
         <TextView
             android:layout_width="wrap_content"
@@ -192,5 +203,40 @@
             android:textSize="12sp" />
 
     </LinearLayout>
+
+    <!-- 左侧「手柄」悬浮入口：唯一展开入口，收起时也常驻可见 -->
+    <FrameLayout
+        android:id="@+id/handleTab"
+        android:layout_width="46dp"
+        android:layout_height="46dp"
+        android:layout_gravity="start|top"
+        android:layout_marginTop="56dp"
+        android:background="@drawable/bg_tab"
+        android:clickable="true"
+        android:contentDescription="@string/tab_desc"
+        android:elevation="6dp"
+        android:focusable="true">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:letterSpacing="0.04"
+            android:text="@string/tab_label"
+            android:textColor="#FFD8E2EC"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <View
+            android:id="@+id/statusDot"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:layout_gravity="top|end"
+            android:layout_marginTop="7dp"
+            android:layout_marginEnd="7dp"
+            android:background="@drawable/bg_dot_ok"
+            android:visibility="gone" />
+
+    </FrameLayout>
 
 </FrameLayout>
