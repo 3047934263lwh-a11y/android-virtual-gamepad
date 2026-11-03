@@ -28,6 +28,17 @@ class GyroAim(context: Context) : SensorEventListener {
         const val MAX_PITCH_RATE = 95.0f
         private const val DEAD_RATE = 3.0f   // 度/秒以下视为静止
         private const val EMA = 0.45f        // 传感器噪声滤波强度
+
+        /** 灵敏度滑杆（0%–100%）对应的增益范围：指数映射，两端差异明显。 */
+        const val SENS_MIN_GAIN = 0.12f
+        const val SENS_MAX_GAIN = 3.2f
+
+        /** 0..1 灵敏度 → 增益。低端大幅更慢、高端更快（约 26.7 倍跨度）。 */
+        fun gainForSens(t: Float): Float {
+            val x = t.coerceIn(0f, 1f)
+            val k = (SENS_MAX_GAIN / SENS_MIN_GAIN).toDouble()
+            return (SENS_MIN_GAIN * Math.pow(k, x.toDouble())).toFloat()
+        }
         private const val GAIN_DEFAULT = 1.0f
     }
 
