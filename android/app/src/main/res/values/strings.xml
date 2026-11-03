@@ -10,6 +10,4 @@
     <string name="status_idle">未连接</string>
     <string name="err_ip">请输入电脑的局域网 IP，例如 192.168.1.20</string>
     <string name="err_port">端口必须为 1-65535</string>
-    <string name="tab_label">手柄</string>
-    <string name="tab_desc">展开或收起连接控制栏</string>
 </resources>
