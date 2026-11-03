@@ -311,7 +311,7 @@ class GamepadView @JvmOverloads constructor(
                         o.optDouble("dx", 0.0).toFloat(),
                         o.optDouble("dy", 0.0).toFloat(),
                         o.optDouble("s", 1.0).toFloat(),
-                        o.optDouble("a", 1.0).toFloat().coerceIn(0.35f, 1f)
+                        o.optDouble("a", 1.0).toFloat().coerceIn(0.05f, 1f)
                     )
                 }
             } catch (e: Exception) {
@@ -348,14 +348,34 @@ class GamepadView @JvmOverloads constructor(
         val c = layout.getOrPut(key) { Ctrl() }
         c.s = scale.coerceIn(0.5f, 2.0f)
         computeLayout()
+        clampIntoBounds(key, c)
+        computeLayout()
         invalidate()
+    }
+
+    /** 把控件矩形限制在屏幕内：允许全屏任意位置，但不允许整块拖出屏幕。 */
+    private fun clampIntoBounds(key: String, c: Ctrl) {
+        val W = width.toFloat()
+        val H = height.toFloat()
+        if (W <= 0f || H <= 0f) return
+        val r = outlineOf(key)
+        var fixX = 0f
+        var fixY = 0f
+        if (r.width() >= W) fixX = (W / 2f - r.centerX()) / W
+        else if (r.left < 0f) fixX = -r.left / W
+        else if (r.right > W) fixX = (W - r.right) / W
+        if (r.height() >= H) fixY = (H / 2f - r.centerY()) / H
+        else if (r.top < 0f) fixY = -r.top / H
+        else if (r.bottom > H) fixY = (H - r.bottom) / H
+        if (fixX != 0f) c.dx += fixX
+        if (fixY != 0f) c.dy += fixY
     }
 
     fun controlScale(key: String): Float = ov(key).s
 
     fun setControlAlpha(key: String, a: Float) {
         val c = layout.getOrPut(key) { Ctrl() }
-        c.a = a.coerceIn(0.35f, 1f)
+        c.a = a.coerceIn(0.05f, 1f)
         computeLayout()
         invalidate()
     }
@@ -428,8 +448,8 @@ class GamepadView @JvmOverloads constructor(
         if (W <= 0f || H <= 0f) return
         val base = min(W, H)
 
-        val kBtn = (uiScale * buttonScale).coerceIn(0.60f, 1.30f)
-        val kStick = (uiScale * stickScale).coerceIn(0.60f, 1.35f)
+        val kBtn = (uiScale * buttonScale).coerceIn(0.45f, 2.20f)
+        val kStick = (uiScale * stickScale).coerceIn(0.45f, 2.20f)
 
         val ls = ov("LS")
         val rs = ov("RS")
@@ -1071,10 +1091,10 @@ class GamepadView @JvmOverloads constructor(
                 val c = layout.getOrPut(key) { Ctrl() }
                 c.dx += (event.x - editLastX) / width
                 c.dy += (event.y - editLastY) / height
-                c.dx = c.dx.coerceIn(-0.45f, 0.45f)
-                c.dy = c.dy.coerceIn(-0.55f, 0.55f)
                 editLastX = event.x
                 editLastY = event.y
+                computeLayout()
+                clampIntoBounds(key, c)   // 全屏可拖，只保证控件不越出屏幕
                 computeLayout()
 
                 val o = outlineOf(key)
