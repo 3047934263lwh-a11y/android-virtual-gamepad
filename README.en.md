@@ -14,7 +14,8 @@ Use an Android phone as a virtual Xbox 360 controller. Sticks, D-pad, ABXY, bump
 | --- | --- |
 | Real Xbox 360 pad | Kernel-level virtual device; XInput games recognize it natively |
 | **Local multi-player (P1–P4)** | Several phones on one PC: each gets its own pad and player number; rumble is routed to the right phone |
-| **Gyro aiming** | Turn the phone = turn the camera (fused orientation, no drift); adds on top of the right stick; sensitivity 40–300%; invert yaw/pitch toggles |
+| **Gyro aiming** | Turn the phone = turn the camera (fused orientation, no drift); adds on top of the right stick; invert yaw/pitch toggles |
+| **Two independent sensitivities** | "Gyro camera sensitivity" and "right-stick camera sensitivity" are separate 0–100 settings; changing one never affects the other |
 | Rumble feedback | `XInputSetState` motor data is streamed back to the phone |
 | **Stick click (LS / RS)** | Three selectable trigger modes in Settings: (1) tap the stick centre, (2) double-tap anywhere inside the stick, (3) hold whenever the stick is operated. Pushing the stick never triggers a click |
 | Per-control editing | Move / resize / set opacity of every control, saved automatically |

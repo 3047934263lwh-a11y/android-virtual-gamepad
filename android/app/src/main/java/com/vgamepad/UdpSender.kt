@@ -232,12 +232,16 @@ class UdpSender(private val state: GamepadState) {
         buffer.put((state.buttons and 0xFF).toByte())
         buffer.put((state.buttons ushr 8 and 0xFF).toByte())
         buffer.put((state.sequence and 0xFF).toByte())
+        // 右摇杆灵敏度：只缩放"触摸摇杆"这一路，陀螺仪增益由 GyroAim 单独控制，
+        // 因此调右摇杆灵敏度不会改变陀螺仪灵敏度，反之亦然。
+        val sx = (state.rx * state.stickSens).toInt().coerceIn(-32767, 32767)
+        val sy = (state.ry * state.stickSens).toInt().coerceIn(-32767, 32767)
         // 陀螺仪模式：右摇杆 = 触摸摇杆 + 陀螺仪 叠加（摇杆大幅转、陀螺仪微调），
         // 相加后限幅 ±32767；关闭陀螺仪时右摇杆恢复独占
         val orx = if (state.useGyro)
-            (state.rx + state.gyroRx).coerceIn(-32767, 32767) else state.rx
+            (sx + state.gyroRx).coerceIn(-32767, 32767) else sx
         val ory = if (state.useGyro)
-            (state.ry + state.gyroRy).coerceIn(-32767, 32767) else state.ry
+            (sy + state.gyroRy).coerceIn(-32767, 32767) else sy
         buffer.putShort(state.lx.toShort())
         buffer.putShort(state.ly.toShort())
         buffer.putShort(orx.toShort())

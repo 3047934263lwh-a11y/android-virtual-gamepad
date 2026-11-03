@@ -45,6 +45,13 @@ class GamepadState {
     @Volatile
     var ry: Int = 0
 
+    /**
+     * 右摇杆视角灵敏度（增益，1.0 = 标准）。发送前只作用于触摸右摇杆，
+     * 与陀螺仪灵敏度（GyroAim.gain）互相独立、互不影响。
+     */
+    @Volatile
+    var stickSens: Float = 1f
+
     /** 左扳机 0..255 */
     @Volatile
     var lt: Int = 0

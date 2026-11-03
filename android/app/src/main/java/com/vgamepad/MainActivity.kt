@@ -59,6 +59,8 @@ class MainActivity : AppCompatActivity() {
     private var barCurrentWidth = 0
     private var barAnim: ValueAnimator? = null
     private var gyroSens = 65f
+    /** 右摇杆视角灵敏度（0–100 滑杆值，50 = 标准 1.0×），与陀螺仪灵敏度完全独立 */
+    private var stickSens = 50f
     /** 摇杆按下（LS/RS）触发方式：0=轻点中心 1=双击区域内任意位置 2=操作摇杆即按下 */
     private var stickClickMode = CLICK_CENTER
     private lateinit var sender: UdpSender
@@ -218,6 +220,9 @@ class MainActivity : AppCompatActivity() {
         }
         gyroSens = prefs.getFloat("gyro_sens", 65f).coerceIn(0f, 100f).roundToInt().toFloat()
         gyroAim?.gain = GyroAim.gainForSens(gyroSens / 100f)
+        // 右摇杆灵敏度：独立的偏好键与独立增益，改它不会动陀螺仪灵敏度
+        stickSens = prefs.getFloat("stick_sens", 50f).coerceIn(0f, 100f).roundToInt().toFloat()
+        gamepadView.state.stickSens = stickGain(stickSens)
         stickClickMode = prefs.getInt("stick_click_mode", CLICK_CENTER)
             .coerceIn(CLICK_CENTER, CLICK_ALWAYS)
         gamepadView.stickClickMode = stickClickMode
@@ -368,6 +373,7 @@ class MainActivity : AppCompatActivity() {
             gyroSw.text = "陀螺仪瞄准（此设备不支持）"
         }
         container.addView(gyroSw)
+        container.addView(label("陀螺仪视角灵敏度"))
         container.addView(
             Slider(ctx).apply {
                 valueFrom = 0f
@@ -384,6 +390,14 @@ class MainActivity : AppCompatActivity() {
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 )
+            }
+        )
+        container.addView(label("右摇杆视角灵敏度（50 = 标准）"))
+        container.addView(
+            pctSlider(stickSens) { v ->
+                stickSens = v
+                gamepadView.state.stickSens = stickGain(v)
+                prefs.edit().putFloat("stick_sens", v).apply()
             }
         )
         container.addView(
@@ -649,6 +663,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---------- 震动回传 ----------
+
+    /** 右摇杆灵敏度滑杆值（0–100）→ 增益：0→0.4×，50→1.0×（标准），100→1.6×。 */
+    private fun stickGain(p: Float): Float = 0.4f + p.coerceIn(0f, 100f) * 0.012f
 
     /** 把 0–100 的三个触感滑杆值换算为 GamepadView 的实际参数。 */
     private fun applyHapticParams() {

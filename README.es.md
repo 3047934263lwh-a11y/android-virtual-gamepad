@@ -14,7 +14,7 @@ Usa un teléfono Android como mando virtual de Xbox 360. Los sticks, la cruceta,
 | --- | --- |
 | Mando real de Xbox 360 | Dispositivo virtual a nivel de kernel; los juegos XInput lo reconocen de forma nativa |
 | **Multijugador local (P1–P4)** | Varios teléfonos en un PC: cada uno recibe su propio mando y número de jugador; la vibración vuelve al teléfono correcto |
-| **Puntería por giroscopio** | Girar el teléfono = girar la cámara (orientación fusionada, sin deriva); se **suma** al stick derecho; sensibilidad 40–300%; interruptores de inversión de pitch/yaw |
+| **Puntería por giroscopio** | Girar el teléfono = girar la cámara (orientación fusionada, sin deriva); se **suma** al stick derecho; sensibilidad de giro y de stick derecho independientes (0–100); interruptores de inversión de pitch/yaw |
 | Vibración | Los motores de `XInputSetState` se devuelven al teléfono |
 | Edición por control | Mover / cambiar tamaño / opacidad de cada control, con guardado automático |
 | Interfaz de vidrio oscuro | Estética de vidrio obsidiana en capas, letras ABXY de colores de alto contraste, animación de pulsación |
