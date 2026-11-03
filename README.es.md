@@ -19,6 +19,7 @@ Usa un teléfono Android como mando virtual de Xbox 360. Los sticks, la cruceta,
 | Edición por control | Mover / cambiar tamaño / opacidad de cada control, con guardado automático |
 | Interfaz de vidrio oscuro | Estética de vidrio obsidiana en capas, letras ABXY de colores de alto contraste, animación de pulsación |
 | Reconexión automática | La app se conecta sola al último servidor al abrirse |
+| **Cajón de conexión flotante** | La barra superior está plegada por defecto; solo queda una pestaña «手柄» en el borde izquierdo (punto verde si hay conexión). Se abre/cierra con una animación de 300 ms; plegada no intercepta ningún toque del juego |
 | Arranque con un clic | El script del PC comprueba dependencias, limpia instancias previas, libera el puerto y arranca el receptor |
 | Juegos de prueba incluidos | 4 juegos de PC para probar el mando (plataformas / arena dual-stick / cámara / paseo 3D) |
 
@@ -33,7 +34,7 @@ Los juegos leen mandos por **XInput** (`xinput1_4.dll`) o por el antiguo **Direc
 1. **Instalar ViGEmBus** (una vez): descárgalo de <https://github.com/nefarius/ViGEmBus/releases>, ejecútalo como administrador y **reinicia** el PC.
 2. **Arrancar el receptor**: doble clic en `一键启动.bat` (o `START-RECEIVER.bat`, mismo contenido). Comprueba Python y la librería `vgamepad` (la instala si falta), el driver, mata instancias previas y escucha en el UDP 26760. Permite el acceso en el firewall para redes privadas.
 3. **Compilar la app Android** (solo la primera vez): abre la carpeta `android/` en Android Studio, espera la sincronización de Gradle y pulsa *Build APK(s)*. Instala `app/build/outputs/apk/debug/app-debug.apk` en el teléfono.
-4. **Conectar**: teléfono y PC en la misma Wi-Fi. En la app introduce la IPv4 del PC y el puerto `26760`, pulsa conectar. Después la app **se reconecta sola**. La barra de estado muestra `connected · 125 pps · P1`.
+4. **Conectar**: teléfono y PC en la misma Wi-Fi. Toca la **pestaña «手柄»** del borde izquierdo para abrir el cajón de conexión, introduce la IPv4 del PC y el puerto `26760`, pulsa conectar. Después la app **se reconecta sola**. Toca la pestaña otra vez (o fuera del panel) para plegarlo; el punto verde indica conexión activa. La barra de estado muestra `connected · 125 pps · P1`.
 5. **Verificar**: `Win+R` → `joy.cpl` debe mostrar "Xbox 360 Controller for Windows". Prueba sticks y botones en Propiedades.
 6. **Arrancar el juego** después del receptor (los juegos enumeran mandos al iniciar). En juegos de Steam, desactiva *Steam Input* para ese título.
 
