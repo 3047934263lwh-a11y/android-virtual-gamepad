@@ -7,8 +7,12 @@ import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.view.View
 import android.view.WindowManager
+import android.view.animation.AccelerateInterpolator
+import android.view.animation.DecelerateInterpolator
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.SeekBar
@@ -34,6 +38,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var connectBtn: MaterialButton
     private lateinit var settingsBtn: ImageButton
     private lateinit var statusText: TextView
+    private lateinit var connBar: LinearLayout
+    private lateinit var handleTab: FrameLayout
+    private lateinit var drawerScrim: View
+    private lateinit var statusDot: View
+    private var drawerOpen = false
     private lateinit var sender: UdpSender
 
     private lateinit var editBar: LinearLayout
@@ -59,11 +68,13 @@ class MainActivity : AppCompatActivity() {
         override fun onConnected(host: String, port: Int) {
             statusText.text = "已连接 $host:$port"
             statusText.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.ok))
+            statusDot.visibility = View.VISIBLE
         }
 
         override fun onError(message: String) {
             statusText.text = message
             statusText.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.err))
+            statusDot.visibility = View.GONE
         }
 
         override fun onStats(pps: Int) {
@@ -71,6 +82,7 @@ class MainActivity : AppCompatActivity() {
             statusText.text = "已连接 · $pps pps" +
                 (if (playerNo > 0) " · ${playerNo}P" else "")
             statusText.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.ok))
+            statusDot.visibility = View.VISIBLE
         }
 
         override fun onStopped() = Unit
@@ -87,6 +99,7 @@ class MainActivity : AppCompatActivity() {
             if (changed) toast("本手机分配为 ${playerIndex}P 手柄")
             statusText.text = "已连接 · ${playerIndex}P"
             statusText.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.ok))
+            statusDot.visibility = View.VISIBLE
         }
     }
 
@@ -102,6 +115,17 @@ class MainActivity : AppCompatActivity() {
         connectBtn = findViewById(R.id.connectBtn)
         settingsBtn = findViewById(R.id.settingsBtn)
         statusText = findViewById(R.id.statusText)
+
+        // ---- 连接栏抽屉：默认收起，仅保留左侧「手柄」悬浮入口 ----
+        connBar = findViewById(R.id.connBar)
+        handleTab = findViewById(R.id.handleTab)
+        drawerScrim = findViewById(R.id.drawerScrim)
+        statusDot = findViewById(R.id.statusDot)
+        connBar.visibility = View.INVISIBLE
+        // 首帧前即移出屏幕左侧，避免出现"闪现一下再收起"的跳动
+        connBar.post { connBar.translationX = -drawerWidth() }
+        handleTab.setOnClickListener { toggleDrawer() }
+        drawerScrim.setOnClickListener { closeDrawer() }
 
         ipInput.setText(prefs.getString("ip", ""))
         portInput.setText(prefs.getInt("port", UdpSender.DEFAULT_PORT).toString())
@@ -133,7 +157,7 @@ class MainActivity : AppCompatActivity() {
         connectBtn.setOnClickListener {
             if (sender.isRunning) disconnect() else connect()
         }
-        settingsBtn.setOnClickListener { openSettings() }
+        settingsBtn.setOnClickListener { closeDrawer(); openSettings() }
 
         editBar = findViewById(R.id.editBar)
         editLabel = findViewById(R.id.editLabel)
@@ -502,6 +526,64 @@ class MainActivity : AppCompatActivity() {
         portInput.isEnabled = true
         statusText.text = getString(R.string.status_idle)
         statusText.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+        statusDot.visibility = View.GONE
+    }
+
+    // ---------- 连接栏抽屉 ----------
+
+    /** 抽屉宽度：优先用实际测量宽度，未测量时退化为"屏宽 - 左右各 10dp 边距"。 */
+    private fun drawerWidth(): Float {
+        val w = if (::connBar.isInitialized) connBar.width else 0
+        return if (w > 0) w.toFloat()
+        else resources.displayMetrics.widthPixels - 20f * resources.displayMetrics.density
+    }
+
+    private fun toggleDrawer() {
+        if (drawerOpen) closeDrawer() else openDrawer()
+    }
+
+    /** 从左向右滑入（ease-out），遮罩淡入；连接逻辑完全不受影响。 */
+    private fun openDrawer() {
+        if (drawerOpen) return
+        drawerOpen = true
+        connBar.animate().cancel()
+        connBar.translationX = -drawerWidth()
+        connBar.visibility = View.VISIBLE
+        connBar.animate()
+            .translationX(0f)
+            .setDuration(300L)
+            .setInterpolator(DecelerateInterpolator(1.6f))
+            .start()
+        drawerScrim.animate().cancel()
+        drawerScrim.visibility = View.VISIBLE
+        drawerScrim.alpha = 0f
+        drawerScrim.animate().alpha(1f).setDuration(300L).start()
+    }
+
+    /** 从右向左滑出（ease-in），结束后置 INVISIBLE，确保不拦截任何触控。 */
+    private fun closeDrawer() {
+        if (!drawerOpen) return
+        drawerOpen = false
+        connBar.animate().cancel()
+        connBar.animate()
+            .translationX(-drawerWidth())
+            .setDuration(280L)
+            .setInterpolator(AccelerateInterpolator(1.5f))
+            .withEndAction { connBar.visibility = View.INVISIBLE }
+            .start()
+        drawerScrim.animate().cancel()
+        drawerScrim.animate().alpha(0f).setDuration(250L)
+            .withEndAction { drawerScrim.visibility = View.GONE }
+            .start()
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (drawerOpen) {
+            closeDrawer()
+            return
+        }
+        super.onBackPressed()
     }
 
     // ---------- 生命周期 ----------
