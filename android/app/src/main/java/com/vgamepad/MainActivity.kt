@@ -25,7 +25,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.slider.Slider
@@ -275,7 +274,6 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putFloat(key, value).apply()
         }
 
-        val sheet = BottomSheetDialog(ctx)
 
         // 布局编辑入口放在最上方，展开即可见，避免被滑杆挤出屏幕
         container.addView(
@@ -288,7 +286,7 @@ class MainActivity : AppCompatActivity() {
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 )
                 setOnClickListener {
-                    sheet.dismiss()
+                    hideSettings()
                     enterEditMode()
                 }
             }
@@ -398,7 +396,7 @@ class MainActivity : AppCompatActivity() {
                     gamepadView.uiScale = 1f
                     gamepadView.stickScale = 1f
                     gamepadView.buttonScale = 1f
-                    sheet.dismiss()
+                    hideSettings()
                     openSettings()
                 }
             }
@@ -412,16 +410,66 @@ class MainActivity : AppCompatActivity() {
         )
         val scroll = androidx.core.widget.NestedScrollView(ctx)
         // 横屏下 WRAP_CONTENT 会被压成一条（内容被裁），必须给显式高度，内部滚动
-        val sheetH = (ctx.resources.displayMetrics.heightPixels * 0.90f).toInt()
         scroll.layoutParams = android.widget.FrameLayout.LayoutParams(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-            sheetH
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT
         )
         scroll.addView(container)
-        sheet.setContentView(scroll)
-        // 直接全展开，保证"自定义按键布局"入口不被折叠隐藏
-        sheet.behavior.skipCollapsed = true
-        sheet.show()
+        showSettingsPanel(scroll)
+    }
+
+    // ---------- 设置面板（自绘覆盖层，不依赖 BottomSheet） ----------
+
+    private var settingsOverlay: android.view.View? = null
+
+    private fun showSettingsPanel(content: android.view.View) {
+        hideSettings()
+        val ctx = this
+        val root = findViewById<android.view.ViewGroup>(R.id.root)
+        val dm = resources.displayMetrics
+
+        val overlay = android.widget.FrameLayout(ctx).apply {
+            layoutParams = android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            setBackgroundColor(0xCC05070A.toInt())
+            isClickable = true            // 吞掉面板外的点击
+            setOnClickListener { hideSettings() }
+        }
+        val card = android.widget.FrameLayout(ctx).apply {
+            background = ContextCompat.getDrawable(ctx, R.drawable.bg_bar)
+            clipToOutline = false
+            isClickable = true
+            setOnClickListener { }        // 面板内点击不穿透
+            layoutParams = android.widget.FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                (dm.heightPixels * 0.86f).toInt()
+            ).apply {
+                gravity = android.view.Gravity.BOTTOM
+                leftMargin = (34 * dm.density).toInt()
+                rightMargin = (34 * dm.density).toInt()
+                bottomMargin = (10 * dm.density).toInt()
+            }
+        }
+        card.addView(content)
+        overlay.addView(card)
+        root.addView(overlay)
+        settingsOverlay = overlay
+
+        card.translationY = dm.heightPixels.toFloat()
+        card.animate().translationY(0f).setDuration(280L)
+            .setInterpolator(DecelerateInterpolator(1.4f)).start()
+        overlay.alpha = 0f
+        overlay.animate().alpha(1f).setDuration(220L).start()
+    }
+
+    private fun hideSettings() {
+        val overlay = settingsOverlay ?: return
+        settingsOverlay = null
+        overlay.animate().alpha(0f).setDuration(180L)
+            .withEndAction { (overlay.parent as? android.view.ViewGroup)?.removeView(overlay) }
+            .start()
     }
 
     // ---------- 逐键布局编辑 ----------
@@ -625,6 +673,10 @@ class MainActivity : AppCompatActivity() {
 
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
+        if (settingsOverlay != null) {
+            hideSettings()
+            return
+        }
         if (barExpanded) {
             collapseBar()
             return
