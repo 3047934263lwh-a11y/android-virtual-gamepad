@@ -3,16 +3,18 @@ package com.vgamepad
 import android.content.Context
 import android.os.Build
 import android.os.Bundle
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.widget.EditText
-import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.SeekBar
@@ -39,10 +41,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var settingsBtn: ImageButton
     private lateinit var statusText: TextView
     private lateinit var connBar: LinearLayout
-    private lateinit var handleTab: FrameLayout
-    private lateinit var drawerScrim: View
-    private lateinit var statusDot: View
-    private var drawerOpen = false
+    private lateinit var barTitle: TextView
+    private var barExpanded = false
+    private var barFullWidth = 0
+    private var barCollapsedWidth = 0
+    private var barCurrentWidth = 0
+    private var barAnim: ValueAnimator? = null
+    private var gyroSens = 65f
     private lateinit var sender: UdpSender
 
     private lateinit var editBar: LinearLayout
@@ -68,13 +73,11 @@ class MainActivity : AppCompatActivity() {
         override fun onConnected(host: String, port: Int) {
             statusText.text = "已连接 $host:$port"
             statusText.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.ok))
-            statusDot.visibility = View.VISIBLE
         }
 
         override fun onError(message: String) {
             statusText.text = message
             statusText.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.err))
-            statusDot.visibility = View.GONE
         }
 
         override fun onStats(pps: Int) {
@@ -82,7 +85,6 @@ class MainActivity : AppCompatActivity() {
             statusText.text = "已连接 · $pps pps" +
                 (if (playerNo > 0) " · ${playerNo}P" else "")
             statusText.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.ok))
-            statusDot.visibility = View.VISIBLE
         }
 
         override fun onStopped() = Unit
@@ -99,7 +101,6 @@ class MainActivity : AppCompatActivity() {
             if (changed) toast("本手机分配为 ${playerIndex}P 手柄")
             statusText.text = "已连接 · ${playerIndex}P"
             statusText.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.ok))
-            statusDot.visibility = View.VISIBLE
         }
     }
 
@@ -116,16 +117,19 @@ class MainActivity : AppCompatActivity() {
         settingsBtn = findViewById(R.id.settingsBtn)
         statusText = findViewById(R.id.statusText)
 
-        // ---- 连接栏抽屉：默认收起，仅保留左侧「手柄」悬浮入口 ----
+        // ---- 顶部连接栏：默认收起，仅保留原位置「手柄」文字作为唯一开关 ----
         connBar = findViewById(R.id.connBar)
-        handleTab = findViewById(R.id.handleTab)
-        drawerScrim = findViewById(R.id.drawerScrim)
-        statusDot = findViewById(R.id.statusDot)
-        connBar.visibility = View.INVISIBLE
-        // 首帧前即移出屏幕左侧，避免出现"闪现一下再收起"的跳动
-        connBar.post { connBar.translationX = -drawerWidth() }
-        handleTab.setOnClickListener { toggleDrawer() }
-        drawerScrim.setOnClickListener { closeDrawer() }
+        barTitle = findViewById(R.id.barTitle)
+        barTitle.setOnClickListener { toggleBar() }
+        connBar.post {
+            val dm = resources.displayMetrics
+            barFullWidth = dm.widthPixels - dp(20)
+            barCollapsedWidth = measureCollapsedWidth()
+            barCurrentWidth = barCollapsedWidth
+            applyBarWidth(barCollapsedWidth)
+            setBarContentVisible(false)
+            connBar.visibility = View.VISIBLE
+        }
 
         ipInput.setText(prefs.getString("ip", ""))
         portInput.setText(prefs.getInt("port", UdpSender.DEFAULT_PORT).toString())
@@ -146,7 +150,16 @@ class MainActivity : AppCompatActivity() {
         // 陀螺仪瞄准：把"转手机"换算成右摇杆等效值，发送时叠加到右摇杆字节
         gyroAim = GyroAim(this)
         wantGyro = prefs.getBoolean("gyro", false)
-        gyroAim?.gain = prefs.getFloat("gyro_gain", 1.0f)
+        // 灵敏度改为 0–100%（指数映射到增益）；旧版 gyro_gain 自动迁移一次
+        if (!prefs.contains("gyro_sens")) {
+            val oldGain = prefs.getFloat("gyro_gain", 1.0f)
+            val t = (kotlin.math.ln((oldGain / GyroAim.SENS_MIN_GAIN).toDouble()) /
+                     kotlin.math.ln((GyroAim.SENS_MAX_GAIN / GyroAim.SENS_MIN_GAIN).toDouble()))
+                .toFloat().coerceIn(0f, 1f)
+            prefs.edit().putFloat("gyro_sens", (t * 100f).roundToInt().toFloat()).apply()
+        }
+        gyroSens = prefs.getFloat("gyro_sens", 65f).coerceIn(0f, 100f).roundToInt().toFloat()
+        gyroAim?.gain = GyroAim.gainForSens(gyroSens / 100f)
         gyroAim?.invertY = prefs.getBoolean("gyro_invert_y", false)
         gyroAim?.invertX = prefs.getBoolean("gyro_invert_x", false)
         gyroAim?.onAim = { rx, ry ->
@@ -157,7 +170,7 @@ class MainActivity : AppCompatActivity() {
         connectBtn.setOnClickListener {
             if (sender.isRunning) disconnect() else connect()
         }
-        settingsBtn.setOnClickListener { closeDrawer(); openSettings() }
+        settingsBtn.setOnClickListener { collapseBar(); openSettings() }
 
         editBar = findViewById(R.id.editBar)
         editLabel = findViewById(R.id.editLabel)
@@ -178,7 +191,7 @@ class MainActivity : AppCompatActivity() {
                 if (gamepadView.editTarget == 0) {
                     gamepadView.setControlScale(key, 0.5f + progress / 100f)
                 } else {
-                    gamepadView.setControlAlpha(key, 0.35f + progress / 100f * 0.65f)
+                    gamepadView.setControlAlpha(key, 0.05f + progress / 150f * 0.95f)
                 }
             }
 
@@ -297,13 +310,15 @@ class MainActivity : AppCompatActivity() {
         container.addView(gyroSw)
         container.addView(
             Slider(ctx).apply {
-                valueFrom = 0.4f
-                valueTo = 3.0f
-                value = (gyroAim?.gain ?: 1.0f).coerceIn(0.4f, 3.0f)
-                setLabelFormatter { "${(it * 100).toInt()}%" }
+                valueFrom = 0f
+                valueTo = 100f
+                stepSize = 1f
+                value = gyroSens.roundToInt().toFloat().coerceIn(0f, 100f)
+                setLabelFormatter { "${it.roundToInt()}%" }
                 addOnChangeListener { _, v, _ ->
-                    gyroAim?.gain = v
-                    prefs.edit().putFloat("gyro_gain", v).apply()
+                    gyroSens = v
+                    gyroAim?.gain = GyroAim.gainForSens(v / 100f)
+                    prefs.edit().putFloat("gyro_sens", v).apply()
                 }
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
@@ -396,9 +411,11 @@ class MainActivity : AppCompatActivity() {
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT
         )
         val scroll = androidx.core.widget.NestedScrollView(ctx)
+        // 横屏下 WRAP_CONTENT 会被压成一条（内容被裁），必须给显式高度，内部滚动
+        val sheetH = (ctx.resources.displayMetrics.heightPixels * 0.90f).toInt()
         scroll.layoutParams = android.widget.FrameLayout.LayoutParams(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            sheetH
         )
         scroll.addView(container)
         sheet.setContentView(scroll)
@@ -526,61 +543,90 @@ class MainActivity : AppCompatActivity() {
         portInput.isEnabled = true
         statusText.text = getString(R.string.status_idle)
         statusText.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
-        statusDot.visibility = View.GONE
     }
 
-    // ---------- 连接栏抽屉 ----------
+    // ---------- 顶部连接栏展开 / 收起 ----------
 
-    /** 抽屉宽度：优先用实际测量宽度，未测量时退化为"屏宽 - 左右各 10dp 边距"。 */
-    private fun drawerWidth(): Float {
-        val w = if (::connBar.isInitialized) connBar.width else 0
-        return if (w > 0) w.toFloat()
-        else resources.displayMetrics.widthPixels - 20f * resources.displayMetrics.density
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    /**
+     * 收起宽度 = 栏左右内边距 + 「手柄」控件完整盒宽（自身 padding + 文字 + marginEnd）。
+     * 用 Paint 测量，避免首帧 View.width 尚未测量导致算成 0、文字被压成两行或裁掉。
+     */
+    private fun measureCollapsedWidth(): Int {
+        val text = barTitle.text?.toString() ?: ""
+        val spacing = barTitle.letterSpacing * barTitle.textSize * text.length
+        val textW = barTitle.paint.measureText(text) + spacing
+        val titleBox = barTitle.paddingStart + barTitle.paddingEnd + textW
+        val marginEnd = (barTitle.layoutParams as? ViewGroup.MarginLayoutParams)?.rightMargin ?: 0
+        // 必须容纳：栏 paddingStart + 标题盒宽 + 标题 marginEnd + 栏 paddingEnd，再留 4dp 余量
+        return dp(12) + titleBox.toInt() + marginEnd + dp(12) + dp(4)
     }
 
-    private fun toggleDrawer() {
-        if (drawerOpen) closeDrawer() else openDrawer()
+    private fun applyBarWidth(w: Int) {
+        barCurrentWidth = w
+        val lp = connBar.layoutParams
+        lp.width = w
+        connBar.layoutParams = lp
     }
 
-    /** 从左向右滑入（ease-out），遮罩淡入；连接逻辑完全不受影响。 */
-    private fun openDrawer() {
-        if (drawerOpen) return
-        drawerOpen = true
-        connBar.animate().cancel()
-        connBar.translationX = -drawerWidth()
-        connBar.visibility = View.VISIBLE
-        connBar.animate()
-            .translationX(0f)
-            .setDuration(300L)
-            .setInterpolator(DecelerateInterpolator(1.6f))
-            .start()
-        drawerScrim.animate().cancel()
-        drawerScrim.visibility = View.VISIBLE
-        drawerScrim.alpha = 0f
-        drawerScrim.animate().alpha(1f).setDuration(300L).start()
+    /** 除「手柄」标题外的所有控件显隐：INVISIBLE 保留布局尺寸、但不绘制也不接收触摸。 */
+    private fun setBarContentVisible(visible: Boolean) {
+        val v = if (visible) View.VISIBLE else View.INVISIBLE
+        for (i in 1 until connBar.childCount) connBar.getChildAt(i).visibility = v
     }
 
-    /** 从右向左滑出（ease-in），结束后置 INVISIBLE，确保不拦截任何触控。 */
-    private fun closeDrawer() {
-        if (!drawerOpen) return
-        drawerOpen = false
-        connBar.animate().cancel()
-        connBar.animate()
-            .translationX(-drawerWidth())
-            .setDuration(280L)
-            .setInterpolator(AccelerateInterpolator(1.5f))
-            .withEndAction { connBar.visibility = View.INVISIBLE }
-            .start()
-        drawerScrim.animate().cancel()
-        drawerScrim.animate().alpha(0f).setDuration(250L)
-            .withEndAction { drawerScrim.visibility = View.GONE }
-            .start()
+    private fun toggleBar() {
+        if (barExpanded) collapseBar() else expandBar()
+    }
+
+    /**
+     * 从「手柄」文字处向右展开：动画驱动连接栏宽度（子项尺寸固定、超出部分裁剪），
+     * 视觉上即"从左向右依次显现"，且不做位移动画、无位移动画的重叠问题。
+     */
+    private fun expandBar() {
+        if (barExpanded) return
+        barExpanded = true
+        barAnim?.cancel()
+        setBarContentVisible(true)
+        val from = if (barCurrentWidth > 0) barCurrentWidth else barCollapsedWidth
+        barAnim = ValueAnimator.ofInt(from, barFullWidth).apply {
+            duration = 300L
+            interpolator = DecelerateInterpolator(1.6f)
+            addUpdateListener { applyBarWidth(it.animatedValue as Int) }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    applyBarWidth(barFullWidth)
+                }
+            })
+            start()
+        }
+    }
+
+    /** 从右向左收回，终点即「手柄」文字所在的窄条。 */
+    private fun collapseBar() {
+        if (!barExpanded) return
+        barExpanded = false
+        barAnim?.cancel()
+        barCollapsedWidth = measureCollapsedWidth()
+        val from = if (barCurrentWidth > 0) barCurrentWidth else barFullWidth
+        barAnim = ValueAnimator.ofInt(from, barCollapsedWidth).apply {
+            duration = 280L
+            interpolator = AccelerateInterpolator(1.5f)
+            addUpdateListener { applyBarWidth(it.animatedValue as Int) }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    setBarContentVisible(false)   // 收尾彻底隐藏，避免边缘露出下个控件
+                }
+            })
+            start()
+        }
     }
 
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
-        if (drawerOpen) {
-            closeDrawer()
+        if (barExpanded) {
+            collapseBar()
             return
         }
         super.onBackPressed()
