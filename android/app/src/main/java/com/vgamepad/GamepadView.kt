@@ -110,15 +110,17 @@ class GamepadView @JvmOverloads constructor(
          * 不触发按键——避免正常推杆时误按 LS/RS。
          */
         const val STICK_TAP_SLOP_DP = 8f
+        /** 双击模式的位移容差更宽松：双击是明确手势，手指轻微移动不算拖动 */
+        const val STICK_TAP_SLOP_DP_DOUBLE = 14f
         /** 轻点产生的按键保持时长（毫秒），足够所有游戏在下一帧轮询到按下沿 */
-        const val STICK_PULSE_MS = 140L
+        const val STICK_PULSE_MS = 180L
 
         /** 摇杆按下（LS/RS）触发方式：与设置面板的三个选项一一对应 */
         const val STICK_CLICK_CENTER = 0   // 轻点摇杆中心
         const val STICK_CLICK_DOUBLE = 1   // 双击摇杆区域内任意位置
         const val STICK_CLICK_ALWAYS = 2   // 只要操作摇杆就持续按下
         /** 双击判定窗口（毫秒） */
-        const val DOUBLE_TAP_MS = 320L
+        const val DOUBLE_TAP_MS = 400L
 
         /** 按压手感参数 */
         const val GLASS_SINK_DP = 2.0f         // 玻璃下沉（dp）
@@ -1101,7 +1103,11 @@ class GamepadView @JvmOverloads constructor(
                     val zone = pointers.get(id, Z_NONE)
                     if (zone == Z_NONE) continue
                     // 手指相对落点移动超过阈值 → 本次是拖动摇杆，取消 L3/R3 判定
-                    val slop = dp(STICK_TAP_SLOP_DP)
+                    // 双击模式容差更宽松（明确手势，允许轻微位移）
+                    val slop = dp(
+                        if (stickClickMode == STICK_CLICK_DOUBLE) STICK_TAP_SLOP_DP_DOUBLE
+                        else STICK_TAP_SLOP_DP
+                    )
                     when (zone) {
                         Z_LSTICK -> if (hypot(event.getX(i) - lsDownX,
                                               event.getY(i) - lsDownY) > slop
@@ -1191,6 +1197,24 @@ class GamepadView @JvmOverloads constructor(
             when (zone) {
                 Z_LSTICK -> setThumbBit(left = true, on = true)
                 Z_RSTICK -> setThumbBit(left = false, on = true)
+            }
+        }
+
+        // 模式 2：双击 —— 第二次"按下"即触发（不等抬起，避免第二次抬起时的
+        // 轻微位移/时间差把整段双击作废；也更快给到游戏与视觉反馈）
+        if (stickClickMode == STICK_CLICK_DOUBLE) {
+            val now = SystemClock.uptimeMillis()
+            when (zone) {
+                Z_LSTICK -> if (lsLastTapAt > 0 && now - lsLastTapAt <= DOUBLE_TAP_MS) {
+                    lsLastTapAt = 0
+                    lsTapOk = false      // 本次抬起不再重复触发
+                    pulseThumb(left = true)
+                }
+                Z_RSTICK -> if (rsLastTapAt > 0 && now - rsLastTapAt <= DOUBLE_TAP_MS) {
+                    rsLastTapAt = 0
+                    rsTapOk = false
+                    pulseThumb(left = false)
+                }
             }
         }
 
@@ -1291,11 +1315,17 @@ class GamepadView @JvmOverloads constructor(
         when (stickClickMode) {
             STICK_CLICK_ALWAYS -> setThumbBit(left, on = false)
             STICK_CLICK_DOUBLE -> {
+                val now = SystemClock.uptimeMillis()
                 if (!tap) {
-                    if (left) lsLastTapAt = 0 else rsLastTapAt = 0
+                    // 这一次抬起被判为拖动：只让它"不作数"，但不要抹掉 400ms 内刚记录的首击
+                    // （否则一次轻微抖动就会让整段双击失效）
+                    if (left) {
+                        if (now - lsLastTapAt > DOUBLE_TAP_MS) lsLastTapAt = 0
+                    } else {
+                        if (now - rsLastTapAt > DOUBLE_TAP_MS) rsLastTapAt = 0
+                    }
                     return
                 }
-                val now = SystemClock.uptimeMillis()
                 val last = if (left) lsLastTapAt else rsLastTapAt
                 if (last > 0 && now - last <= DOUBLE_TAP_MS) {
                     if (left) lsLastTapAt = 0 else rsLastTapAt = 0
