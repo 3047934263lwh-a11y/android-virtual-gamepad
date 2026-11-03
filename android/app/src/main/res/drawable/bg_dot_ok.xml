@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 已连接：绿色状态点（嵌在「手柄」框内） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#FF5FD68A" />
+    <stroke
+        android:width="0.6dp"
+        android:color="#66FFFFFF" />
+</shape>

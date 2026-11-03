@@ -105,6 +105,21 @@ class GamepadView @JvmOverloads constructor(
         const val DEADZONE = 0.06f
         const val STICK_MAX = 32767f
 
+        /**
+         * 摇杆按下（L3/R3）判定：手指落点与抬起点的位移超过该值即视为"拖动摇杆"，
+         * 不触发按键——避免正常推杆时误按 LS/RS。
+         */
+        const val STICK_TAP_SLOP_DP = 8f
+        /** 轻点产生的按键保持时长（毫秒），足够所有游戏在下一帧轮询到按下沿 */
+        const val STICK_PULSE_MS = 140L
+
+        /** 摇杆按下（LS/RS）触发方式：与设置面板的三个选项一一对应 */
+        const val STICK_CLICK_CENTER = 0   // 轻点摇杆中心
+        const val STICK_CLICK_DOUBLE = 1   // 双击摇杆区域内任意位置
+        const val STICK_CLICK_ALWAYS = 2   // 只要操作摇杆就持续按下
+        /** 双击判定窗口（毫秒） */
+        const val DOUBLE_TAP_MS = 320L
+
         /** 按压手感参数 */
         const val GLASS_SINK_DP = 2.0f         // 玻璃下沉（dp）
         const val PRESS_SINK_MS = 90f          // 下沉时长
@@ -236,12 +251,34 @@ class GamepadView @JvmOverloads constructor(
     // ---------- 触感反馈 ----------
 
     var hapticsEnabled = true
-    var hapticsLevel = 2
+    /** 触感基础强度 0..1（设置滑杆「触感强度」换算而来） */
+    var hapticStrength = 0.55f
+    /** 单次触感时长（毫秒） */
+    var hapticDurationMs = 28
+    /** 同强度下允许重复触发的最小间隔（毫秒） */
+    var hapticIntervalMs = 60
 
     private var lastHapticAt = 0L
     private var lastHapticAmp = 0
     private var lsInDeadzone = true
     private var rsInDeadzone = true
+
+    // ---- 摇杆按下（L3/R3）：轻点摇杆触发一次按键脉冲 ----
+    /** 触发方式（0=轻点中心 / 1=双击区域内任意位置 / 2=操作摇杆即按下） */
+    var stickClickMode = STICK_CLICK_CENTER
+    private var lsDownX = 0f
+    private var lsDownY = 0f
+    private var rsDownX = 0f
+    private var rsDownY = 0f
+    private var lsTapOk = false
+    private var rsTapOk = false
+    private var lsPulseToken = 0
+    private var rsPulseToken = 0
+    private var lsPulseAt = 0L
+    private var rsPulseAt = 0L
+    /** 双击模式下上一次轻点的时刻（0 表示无待配对的首击） */
+    private var lsLastTapAt = 0L
+    private var rsLastTapAt = 0L
 
     private val vibrator: Vibrator? by lazy { obtainVibrator() }
 
@@ -258,21 +295,18 @@ class GamepadView @JvmOverloads constructor(
     }
 
     private fun haptic(intensity: Float) {
-        if (!hapticsEnabled || hapticsLevel <= 0) return
+        if (!hapticsEnabled) return
         val v = vibrator ?: return
         if (!v.hasVibrator()) return
-        val baseAmp = when (hapticsLevel) {
-            1 -> 70
-            2 -> 140
-            else -> 220
-        }
+        val baseAmp = (hapticStrength.coerceIn(0f, 1f) * 255f).toInt()
+        if (baseAmp <= 0) return
         val amp = (baseAmp * (0.55f + 0.45f * intensity.coerceIn(0f, 1f)))
             .toInt().coerceIn(1, 255)
         val now = SystemClock.uptimeMillis()
-        if (amp == lastHapticAmp && now - lastHapticAt < 60) return
+        if (amp == lastHapticAmp && now - lastHapticAt < hapticIntervalMs) return
         lastHapticAt = now
         lastHapticAmp = amp
-        v.vibrate(VibrationEffect.createOneShot(28, amp))
+        v.vibrate(VibrationEffect.createOneShot(hapticDurationMs.toLong(), amp))
     }
 
     // ---------- 尺寸调节 ----------
@@ -796,6 +830,11 @@ class GamepadView @JvmOverloads constructor(
         val cy = center.y + ty
         val ca01 = a01 * ov(key).a
         val active = hypot(knob.x, knob.y) > 2f
+        // 轻点摇杆触发 L3/R3 时的短促高亮反馈；模式 3 下按住期间也保持高亮
+        val flashAt = if (key == "LS") lsPulseAt else rsPulseAt
+        val heldBit = if (key == "LS") Btn.L3 else Btn.R3
+        val tapped = SystemClock.uptimeMillis() - flashAt < STICK_PULSE_MS
+        val lit = active || tapped || (state.buttons and heldBit) != 0
 
         // 玻璃底座（多层烟熏玻璃）
         layeredGlassCircle(c, center.x, cy, radius, 0f, ca01, active)
@@ -810,10 +849,10 @@ class GamepadView @JvmOverloads constructor(
         c.drawArc(tmp, 180f, 180f, false, pStroke)
 
         // 立体玻璃摇杆帽（独立悬浮）
-        val knobPress = if (active) 0.4f else 0f
+        val knobPress = if (lit) 0.4f else 0f
         layeredGlassCircle(c, center.x + knob.x, cy + knob.y, knobRadius,
-                           knobPress, ca01, active)
-        if (active) {
+                           knobPress, ca01, lit)
+        if (lit) {
             pStroke.color = fade(C_GLACIER, ca01 * 0.8f)
             pStroke.strokeWidth = dp(1.2f)
             c.drawCircle(center.x + knob.x, cy + knob.y, knobRadius + dp(1.4f), pStroke)
@@ -1060,7 +1099,18 @@ class GamepadView @JvmOverloads constructor(
                 for (i in 0 until event.pointerCount) {
                     val id = event.getPointerId(i)
                     val zone = pointers.get(id, Z_NONE)
-                    if (zone != Z_NONE) applyZone(zone, event.getX(i), event.getY(i))
+                    if (zone == Z_NONE) continue
+                    // 手指相对落点移动超过阈值 → 本次是拖动摇杆，取消 L3/R3 判定
+                    val slop = dp(STICK_TAP_SLOP_DP)
+                    when (zone) {
+                        Z_LSTICK -> if (hypot(event.getX(i) - lsDownX,
+                                              event.getY(i) - lsDownY) > slop
+                        ) lsTapOk = false
+                        Z_RSTICK -> if (hypot(event.getX(i) - rsDownX,
+                                              event.getY(i) - rsDownY) > slop
+                        ) rsTapOk = false
+                    }
+                    applyZone(zone, event.getX(i), event.getY(i))
                 }
             }
 
@@ -1122,6 +1172,28 @@ class GamepadView @JvmOverloads constructor(
         pointers.put(id, zone)
         zoneDownAt.put(zone, SystemClock.uptimeMillis().toInt())
 
+        // 摇杆轻点（L3/R3）：记住落点，抬起时位移足够小才判定为"按下摇杆"
+        when (zone) {
+            Z_LSTICK -> {
+                lsDownX = x
+                lsDownY = y
+                lsTapOk = true
+            }
+            Z_RSTICK -> {
+                rsDownX = x
+                rsDownY = y
+                rsTapOk = true
+            }
+        }
+
+        // 模式 3：只要操作摇杆（按下即算）就持续按住 LS/RS
+        if (stickClickMode == STICK_CLICK_ALWAYS) {
+            when (zone) {
+                Z_LSTICK -> setThumbBit(left = true, on = true)
+                Z_RSTICK -> setThumbBit(left = false, on = true)
+            }
+        }
+
         val strength = when (zone) {
             Z_A, Z_B, Z_X, Z_Y -> 1.0f
             Z_LB, Z_RB -> 0.85f
@@ -1155,16 +1227,22 @@ class GamepadView @JvmOverloads constructor(
 
         when (zone) {
             Z_LSTICK -> {
+                val tap = lsTapOk
+                lsTapOk = false
                 lsKnob.set(0f, 0f)
                 state.lx = 0
                 state.ly = 0
                 lsInDeadzone = true
+                onStickReleased(left = true, tap = tap)
             }
             Z_RSTICK -> {
+                val tap = rsTapOk
+                rsTapOk = false
                 rsKnob.set(0f, 0f)
                 state.rx = 0
                 state.ry = 0
                 rsInDeadzone = true
+                onStickReleased(left = false, tap = tap)
             }
             Z_LT -> state.lt = 0
             Z_RT -> state.rt = 0
@@ -1188,9 +1266,72 @@ class GamepadView @JvmOverloads constructor(
         rsKnob.set(0f, 0f)
         lsInDeadzone = true
         rsInDeadzone = true
+        lsTapOk = false
+        rsTapOk = false
+        lsLastTapAt = 0L
+        rsLastTapAt = 0L
+        lsPulseToken++
+        rsPulseToken++
         state.reset()
         zoneDownAt.clear()
         invalidate()
+    }
+
+    /**
+     * 摇杆按下脉冲：置位 L3/R3，保持 [STICK_PULSE_MS] 后自动复位。
+     * 用递增 token 保证连续两次轻点时，前一次的复位不会提前清掉后一次。
+     */
+    /**
+     * 摇杆抬起：按当前"摇杆按下方式"决定是否产生 LS/RS。
+     *  - 轻点中心：一次轻点即按下（140ms 脉冲）
+     *  - 双击：320ms 内连点两次才按下（单次不触发）
+     *  - 操作即按下：抬起时释放（按下的位已在 [bindPointer] 里置位）
+     */
+    private fun onStickReleased(left: Boolean, tap: Boolean) {
+        when (stickClickMode) {
+            STICK_CLICK_ALWAYS -> setThumbBit(left, on = false)
+            STICK_CLICK_DOUBLE -> {
+                if (!tap) {
+                    if (left) lsLastTapAt = 0 else rsLastTapAt = 0
+                    return
+                }
+                val now = SystemClock.uptimeMillis()
+                val last = if (left) lsLastTapAt else rsLastTapAt
+                if (last > 0 && now - last <= DOUBLE_TAP_MS) {
+                    if (left) lsLastTapAt = 0 else rsLastTapAt = 0
+                    pulseThumb(left)
+                } else {
+                    if (left) lsLastTapAt = now else rsLastTapAt = now
+                }
+            }
+            else -> if (tap) pulseThumb(left)
+        }
+    }
+
+    private fun setThumbBit(left: Boolean, on: Boolean) {
+        val bit = if (left) Btn.L3 else Btn.R3
+        state.buttons = if (on) state.buttons or bit else state.buttons and bit.inv()
+    }
+
+    private fun pulseThumb(left: Boolean) {
+        setThumbBit(left, on = true)
+        if (left) {
+            lsPulseAt = SystemClock.uptimeMillis()
+            lsPulseToken++
+        } else {
+            rsPulseAt = SystemClock.uptimeMillis()
+            rsPulseToken++
+        }
+        haptic(0.55f)
+        invalidate()
+        val token = if (left) lsPulseToken else rsPulseToken
+        postDelayed({
+            val cur = if (left) lsPulseToken else rsPulseToken
+            if (cur == token) {
+                setThumbBit(left, on = false)
+                invalidate()
+            }
+        }, STICK_PULSE_MS)
     }
 
     private fun zoneAt(x: Float, y: Float, editMode: Boolean = false): Int {
@@ -1237,6 +1378,13 @@ class GamepadView @JvmOverloads constructor(
         val dx = x - center.x
         val dy = y - center.y
         val dist = hypot(dx, dy)
+
+        // 摇杆已被明显推动（超过半径 30%）→ 本次是操作摇杆而不是"按下摇杆"，取消 L3/R3 判定。
+        // 防止"手指按在摇杆偏心位置不动、抬起时误触发 LS/RS"。
+        // 仅"轻点中心"模式需要该限制；双击模式允许在摇杆区域内任意位置双击。
+        if (stickClickMode == STICK_CLICK_CENTER && dist > radius * 0.30f) {
+            if (isLeft) lsTapOk = false else rsTapOk = false
+        }
 
         if (dist < 0.5f) {
             knob.set(0f, 0f)

@@ -9,6 +9,7 @@ import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -33,6 +34,13 @@ import kotlin.math.roundToInt
 
 class MainActivity : AppCompatActivity() {
 
+    private companion object {
+        /** 与 GamepadView 的 STICK_CLICK_* 保持一致 */
+        const val CLICK_CENTER = 0
+        const val CLICK_DOUBLE = 1
+        const val CLICK_ALWAYS = 2
+    }
+
     private lateinit var gamepadView: GamepadView
     private lateinit var ipInput: EditText
     private lateinit var portInput: EditText
@@ -40,13 +48,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var settingsBtn: ImageButton
     private lateinit var statusText: TextView
     private lateinit var connBar: LinearLayout
+    private lateinit var titleBox: LinearLayout
     private lateinit var barTitle: TextView
+    private lateinit var statusDot: View
+    /** 展开态下点击栏外时吞掉本次手势，避免同时触发底下的虚拟按键 */
+    private var swallowTouch = false
     private var barExpanded = false
     private var barFullWidth = 0
     private var barCollapsedWidth = 0
     private var barCurrentWidth = 0
     private var barAnim: ValueAnimator? = null
     private var gyroSens = 65f
+    /** 摇杆按下（LS/RS）触发方式：0=轻点中心 1=双击区域内任意位置 2=操作摇杆即按下 */
+    private var stickClickMode = CLICK_CENTER
     private lateinit var sender: UdpSender
 
     private lateinit var editBar: LinearLayout
@@ -56,7 +70,13 @@ class MainActivity : AppCompatActivity() {
     private val prefs by lazy { getSharedPreferences("vgp", Context.MODE_PRIVATE) }
 
     private var hapticsOn = true
-    private var hapticsLevel = 2
+    // 三组用户自定义震动参数（均为 0–100 的滑杆值）
+    private var hapticStrengthP = 55f   // 触感强度
+    private var hapticDurP = 26f        // 触感时长
+    private var hapticGapP = 30f        // 触感最小间隔
+    private var rumbleGainP = 80f       // 回传加强强度
+    private var rumbleDurP = 24f        // 回传持续时长
+    private var rumbleGapP = 32f        // 回传最小间隔
     private var rumbleOn = true
     private var gyroAim: GyroAim? = null
     private var wantGyro = false
@@ -70,23 +90,28 @@ class MainActivity : AppCompatActivity() {
 
     private val listener = object : UdpSender.Listener {
         override fun onConnected(host: String, port: Int) {
+            setLinkDot(true)
             statusText.text = "已连接 $host:$port"
             statusText.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.ok))
         }
 
         override fun onError(message: String) {
+            setLinkDot(false)
             statusText.text = message
             statusText.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.err))
         }
 
         override fun onStats(pps: Int) {
             if (!sender.isRunning) return
+            setLinkDot(true)
             statusText.text = "已连接 · $pps pps" +
                 (if (playerNo > 0) " · ${playerNo}P" else "")
             statusText.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.ok))
         }
 
-        override fun onStopped() = Unit
+        override fun onStopped() {
+            setLinkDot(false)
+        }
 
         override fun onRumble(largeMotor: Int, smallMotor: Int) {
             handleRumble(largeMotor, smallMotor)
@@ -97,6 +122,7 @@ class MainActivity : AppCompatActivity() {
             // 否则 Toast 会每秒弹出造成"不断闪烁"。
             val changed = playerNo != playerIndex
             playerNo = playerIndex
+            setLinkDot(true)
             if (changed) toast("本手机分配为 ${playerIndex}P 手柄")
             statusText.text = "已连接 · ${playerIndex}P"
             statusText.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.ok))
@@ -118,8 +144,36 @@ class MainActivity : AppCompatActivity() {
 
         // ---- 顶部连接栏：默认收起，仅保留原位置「手柄」文字作为唯一开关 ----
         connBar = findViewById(R.id.connBar)
+        titleBox = findViewById(R.id.titleBox)
         barTitle = findViewById(R.id.barTitle)
-        barTitle.setOnClickListener { toggleBar() }
+        statusDot = findViewById(R.id.statusDot)
+        titleBox.setOnClickListener { toggleBar() }
+        // 让连接栏自身消费落在栏内空白处的触摸：否则会穿透到下层全屏 GamepadView，
+        // 被误判为"点击外部"而收起（点击栏内任何位置都不应收起）。
+        connBar.isClickable = true
+        connBar.setOnClickListener {
+            if (!barExpanded) expandBar()
+        }
+
+        // 展开态：点击连接栏以外的任何区域也收起（与点「手柄」文字走同一个 collapseBar 动画）。
+        // 点击栏内部由栏自身消费，不会走到这里，因此不会误收起。
+        gamepadView.setOnTouchListener { _, ev ->
+            if (barExpanded && ev.actionMasked == MotionEvent.ACTION_DOWN) {
+                swallowTouch = true
+                collapseBar()
+            }
+            if (swallowTouch) {
+                if (ev.actionMasked == MotionEvent.ACTION_UP ||
+                    ev.actionMasked == MotionEvent.ACTION_CANCEL
+                ) {
+                    swallowTouch = false
+                }
+                true    // 吞掉整段手势，避免误触发底下的虚拟按键
+            } else {
+                false
+            }
+        }
+
         connBar.post {
             val dm = resources.displayMetrics
             barFullWidth = dm.widthPixels - dp(20)
@@ -135,14 +189,19 @@ class MainActivity : AppCompatActivity() {
 
         // 恢复用户自定义的控件大小与震动设置
         hapticsOn = prefs.getBoolean("haptics", true)
-        hapticsLevel = prefs.getInt("haptics_level", 2)
+        hapticStrengthP = prefs.getFloat("haptic_strength", 55f).coerceIn(0f, 100f)
+        hapticDurP = prefs.getFloat("haptic_dur", 26f).coerceIn(0f, 100f)
+        hapticGapP = prefs.getFloat("haptic_gap", 30f).coerceIn(0f, 100f)
         rumbleOn = prefs.getBoolean("rumble", true)
+        rumbleGainP = prefs.getFloat("rumble_gain", 80f).coerceIn(0f, 100f)
+        rumbleDurP = prefs.getFloat("rumble_dur", 24f).coerceIn(0f, 100f)
+        rumbleGapP = prefs.getFloat("rumble_gap", 32f).coerceIn(0f, 100f)
         gamepadView.uiScale = prefs.getFloat("ui_scale", 1f)
         gamepadView.stickScale = prefs.getFloat("stick_scale", 1f)
         gamepadView.buttonScale = prefs.getFloat("button_scale", 1f)
         gamepadView.loadLayout(prefs.getString("layout_v1", null))
         gamepadView.hapticsEnabled = hapticsOn
-        gamepadView.hapticsLevel = hapticsLevel
+        applyHapticParams()
 
         sender = UdpSender(gamepadView.state)
 
@@ -159,6 +218,9 @@ class MainActivity : AppCompatActivity() {
         }
         gyroSens = prefs.getFloat("gyro_sens", 65f).coerceIn(0f, 100f).roundToInt().toFloat()
         gyroAim?.gain = GyroAim.gainForSens(gyroSens / 100f)
+        stickClickMode = prefs.getInt("stick_click_mode", CLICK_CENTER)
+            .coerceIn(CLICK_CENTER, CLICK_ALWAYS)
+        gamepadView.stickClickMode = stickClickMode
         gyroAim?.invertY = prefs.getBoolean("gyro_invert_y", false)
         gyroAim?.invertX = prefs.getBoolean("gyro_invert_x", false)
         gyroAim?.onAim = { rx, ry ->
@@ -241,25 +303,25 @@ class MainActivity : AppCompatActivity() {
         }
 
         /**
-         * 连续滑杆：不使用 stepSize，规避 Material Slider 的浮点步进校验
-         * （stepSize=0.05 时，浮点噪声可能触发 IllegalStateException 直接崩溃）。
-         * 显示时四舍五入到 5% 粒度，应用时取连续值即可。
+         * 0–100 百分比滑杆：数值范围/步长/标签与「陀螺仪灵敏度」滑杆完全一致。
+         * stepSize=1 时 value 必须是整数，赋值前统一取整（否则 Material Slider 抛异常）。
          */
-        fun slider(
-            value: Float,
-            fmt: (Float) -> String,
-            onChange: (Float) -> Unit
-        ): Slider = Slider(ctx).apply {
-            valueFrom = 0.75f
-            valueTo = 1.30f
-            this.value = value.coerceIn(0.75f, 1.30f)
-            setLabelFormatter { "${(it * 100).roundToInt()}%" }
+        fun pctSlider(value: Float, onChange: (Float) -> Unit): Slider = Slider(ctx).apply {
+            valueFrom = 0f
+            valueTo = 100f
+            stepSize = 1f
+            this.value = value.roundToInt().toFloat().coerceIn(0f, 100f)
+            setLabelFormatter { "${it.roundToInt()}%" }
             addOnChangeListener { _, v, _ -> onChange(v) }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
+
+        /** 尺寸滑杆：0–100 映射到 0.5×–1.5×（50 = 默认大小）。 */
+        fun sizeSlider(scale: Float, onChange: (Float) -> Unit): Slider =
+            pctSlider((scale - 0.5f) * 100f) { onChange(0.5f + it / 100f) }
 
         fun toggle(text: String, checked: Boolean, onChange: (Boolean) -> Unit): MaterialSwitch =
             MaterialSwitch(ctx).apply {
@@ -339,25 +401,59 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        container.addView(label("控件整体大小"))
+        container.addView(label("摇杆按下（LS / RS）触发方式"))
+        val clickGroup = android.widget.RadioGroup(ctx).apply {
+            orientation = android.widget.RadioGroup.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val clickOptions = arrayOf(
+            "轻点摇杆中心 = 按下",
+            "双击摇杆内任意位置 = 按下",
+            "只要操作摇杆就持续按下"
+        )
+        clickOptions.forEachIndexed { idx, text ->
+            val rb = com.google.android.material.radiobutton.MaterialRadioButton(ctx).apply {
+                // RadioGroup 依赖子项 id 做互斥，没有 id 时会出现多项同时选中
+                id = 1000 + idx
+                this.text = text
+                textSize = 14f
+                setTextColor(ContextCompat.getColor(ctx, R.color.text_primary))
+                isChecked = stickClickMode == idx
+                setPadding(0, (6 * d).toInt(), 0, (6 * d).toInt())
+                setOnCheckedChangeListener { _, checked ->
+                    if (checked) {
+                        stickClickMode = idx
+                        gamepadView.stickClickMode = idx
+                        prefs.edit().putInt("stick_click_mode", idx).apply()
+                    }
+                }
+            }
+            clickGroup.addView(rb)
+        }
+        container.addView(clickGroup)
+
+        container.addView(label("控件整体大小（50 = 默认）"))
         container.addView(
-            slider(gamepadView.uiScale, { "${(it * 100).toInt()}%" }) {
+            sizeSlider(gamepadView.uiScale) {
                 gamepadView.uiScale = it
                 saveScale("ui_scale", it)
             }
         )
 
-        container.addView(label("摇杆大小"))
+        container.addView(label("摇杆大小（50 = 默认）"))
         container.addView(
-            slider(gamepadView.stickScale, { "${(it * 100).toInt()}%" }) {
+            sizeSlider(gamepadView.stickScale) {
                 gamepadView.stickScale = it
                 saveScale("stick_scale", it)
             }
         )
 
-        container.addView(label("按键大小（ABXY / 肩键 / 方向键 / 扳机）"))
+        container.addView(label("按键大小（ABXY / 肩键 / 方向键 / 扳机，50 = 默认）"))
         container.addView(
-            slider(gamepadView.buttonScale, { "${(it * 100).toInt()}%" }) {
+            sizeSlider(gamepadView.buttonScale) {
                 gamepadView.buttonScale = it
                 saveScale("button_scale", it)
             }
@@ -371,10 +467,58 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit().putBoolean("haptics", it).apply()
             }
         )
+        // 按键触感反馈：三个自定义值（强度 / 时长 / 最小间隔）
+        container.addView(label("触感强度"))
+        container.addView(
+            pctSlider(hapticStrengthP) {
+                hapticStrengthP = it
+                prefs.edit().putFloat("haptic_strength", it).apply()
+                applyHapticParams()
+            }
+        )
+        container.addView(label("触感时长"))
+        container.addView(
+            pctSlider(hapticDurP) {
+                hapticDurP = it
+                prefs.edit().putFloat("haptic_dur", it).apply()
+                applyHapticParams()
+            }
+        )
+        container.addView(label("触感最小间隔"))
+        container.addView(
+            pctSlider(hapticGapP) {
+                hapticGapP = it
+                prefs.edit().putFloat("haptic_gap", it).apply()
+                applyHapticParams()
+            }
+        )
+
         container.addView(
             toggle("游戏震动回传（由电脑端游戏驱动）", rumbleOn) {
                 rumbleOn = it
                 prefs.edit().putBoolean("rumble", it).apply()
+            }
+        )
+        // 手机自身振动叠加，用于加强游戏回传的振动：三个自定义值
+        container.addView(label("手机自身振动加强（叠加在游戏回传上）· 强度"))
+        container.addView(
+            pctSlider(rumbleGainP) {
+                rumbleGainP = it
+                prefs.edit().putFloat("rumble_gain", it).apply()
+            }
+        )
+        container.addView(label("手机自身振动加强 · 时长"))
+        container.addView(
+            pctSlider(rumbleDurP) {
+                rumbleDurP = it
+                prefs.edit().putFloat("rumble_dur", it).apply()
+            }
+        )
+        container.addView(label("手机自身振动加强 · 最小间隔"))
+        container.addView(
+            pctSlider(rumbleGapP) {
+                rumbleGapP = it
+                prefs.edit().putFloat("rumble_gap", it).apply()
             }
         )
 
@@ -506,6 +650,18 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- 震动回传 ----------
 
+    /** 把 0–100 的三个触感滑杆值换算为 GamepadView 的实际参数。 */
+    private fun applyHapticParams() {
+        gamepadView.hapticStrength = hapticStrengthP / 100f
+        gamepadView.hapticDurationMs = (10f + hapticDurP * 0.7f).toInt().coerceIn(5, 80)
+        gamepadView.hapticIntervalMs = (hapticGapP * 2f).toInt().coerceIn(0, 200)
+    }
+
+    /** 「手柄」框内状态点：已连接=绿色，未连接=暗灰。 */
+    private fun setLinkDot(on: Boolean) {
+        statusDot.setBackgroundResource(if (on) R.drawable.bg_dot_ok else R.drawable.bg_dot_idle)
+    }
+
     private fun obtainVibrator(): Vibrator? = try {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
@@ -528,18 +684,17 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val gain = when (hapticsLevel) {
-            1 -> 0.55f
-            2 -> 0.80f
-            else -> 1.05f
-        }
+        val gain = rumbleGainP / 100f
+        if (gain <= 0f) return
         val a = (amp * gain).toInt().coerceIn(1, 255)
         val now = SystemClock.uptimeMillis()
-        // 震动事件由游戏高频下发，仅在强度变化或超过 100ms 时真正起振
-        if (a == lastRumbleAmp && now - lastRumbleAt < 100) return
+        val gap = (30f + rumbleGapP * 2.2f).toInt()
+        val dur = (30f + rumbleDurP * 1.7f).toInt()
+        // 震动事件由游戏高频下发，仅在强度变化或超过最小间隔时真正起振
+        if (a == lastRumbleAmp && now - lastRumbleAt < gap) return
         lastRumbleAt = now
         lastRumbleAmp = a
-        v.vibrate(VibrationEffect.createOneShot(70, a))
+        v.vibrate(VibrationEffect.createOneShot(dur.toLong(), a))
     }
 
     // ---------- 连接 ----------
@@ -586,6 +741,7 @@ class MainActivity : AppCompatActivity() {
     private fun disconnect() {
         sender.stop()
         gamepadView.releaseAll()
+        setLinkDot(false)
         connectBtn.text = getString(R.string.btn_connect)
         ipInput.isEnabled = true
         portInput.isEnabled = true
@@ -598,17 +754,18 @@ class MainActivity : AppCompatActivity() {
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     /**
-     * 收起宽度 = 栏左右内边距 + 「手柄」控件完整盒宽（自身 padding + 文字 + marginEnd）。
+     * 收起宽度 = 栏左右内边距 + 「手柄」框完整盒宽（自身 padding + 文字 + 状态点 + marginEnd）。
      * 用 Paint 测量，避免首帧 View.width 尚未测量导致算成 0、文字被压成两行或裁掉。
      */
     private fun measureCollapsedWidth(): Int {
         val text = barTitle.text?.toString() ?: ""
         val spacing = barTitle.letterSpacing * barTitle.textSize * text.length
         val textW = barTitle.paint.measureText(text) + spacing
-        val titleBox = barTitle.paddingStart + barTitle.paddingEnd + textW
-        val marginEnd = (barTitle.layoutParams as? ViewGroup.MarginLayoutParams)?.rightMargin ?: 0
+        val dotW = dp(7) + dp(5)    // 状态点直径 + 与文字的间距
+        val titleBoxW = titleBox.paddingStart + titleBox.paddingEnd + textW + dotW
+        val marginEnd = (titleBox.layoutParams as? ViewGroup.MarginLayoutParams)?.rightMargin ?: 0
         // 必须容纳：栏 paddingStart + 标题盒宽 + 标题 marginEnd + 栏 paddingEnd，再留 4dp 余量
-        return dp(12) + titleBox.toInt() + marginEnd + dp(12) + dp(4)
+        return dp(12) + titleBoxW.toInt() + marginEnd + dp(12) + dp(4)
     }
 
     private fun applyBarWidth(w: Int) {
