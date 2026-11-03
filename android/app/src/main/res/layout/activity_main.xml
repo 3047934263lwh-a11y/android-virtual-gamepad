@@ -10,16 +10,6 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- 抽屉展开时的点击外部关闭遮罩：收起状态 GONE，绝不拦截游戏触控 -->
-    <View
-        android:id="@+id/drawerScrim"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="#2E000000"
-        android:clickable="true"
-        android:focusable="true"
-        android:visibility="gone" />
-
     <LinearLayout
         android:id="@+id/connBar"
         android:layout_width="match_parent"
@@ -29,6 +19,8 @@
         android:layout_marginTop="10dp"
         android:layout_marginEnd="10dp"
         android:background="@drawable/bg_bar"
+        android:clipChildren="true"
+        android:clipToPadding="true"
         android:elevation="5dp"
         android:gravity="center_vertical"
         android:minHeight="46dp"
@@ -39,11 +31,21 @@
         android:paddingBottom="6dp"
         android:visibility="invisible">
 
+        <!-- 原位置「手柄」文字：连接栏唯一的折叠开关，始终可见 -->
         <TextView
+            android:id="@+id/barTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginEnd="10dp"
+            android:clickable="true"
+            android:focusable="true"
             android:letterSpacing="0.10"
+            android:maxLines="1"
+            android:paddingStart="4dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="4dp"
+            android:paddingBottom="6dp"
+            android:singleLine="true"
             android:text="@string/bar_title"
             android:textColor="@color/text_secondary"
             android:textSize="11sp"
@@ -203,40 +205,5 @@
             android:textSize="12sp" />
 
     </LinearLayout>
-
-    <!-- 左侧「手柄」悬浮入口：唯一展开入口，收起时也常驻可见 -->
-    <FrameLayout
-        android:id="@+id/handleTab"
-        android:layout_width="46dp"
-        android:layout_height="46dp"
-        android:layout_gravity="start|top"
-        android:layout_marginTop="56dp"
-        android:background="@drawable/bg_tab"
-        android:clickable="true"
-        android:contentDescription="@string/tab_desc"
-        android:elevation="6dp"
-        android:focusable="true">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:letterSpacing="0.04"
-            android:text="@string/tab_label"
-            android:textColor="#FFD8E2EC"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <View
-            android:id="@+id/statusDot"
-            android:layout_width="8dp"
-            android:layout_height="8dp"
-            android:layout_gravity="top|end"
-            android:layout_marginTop="7dp"
-            android:layout_marginEnd="7dp"
-            android:background="@drawable/bg_dot_ok"
-            android:visibility="gone" />
-
-    </FrameLayout>
 
 </FrameLayout>
