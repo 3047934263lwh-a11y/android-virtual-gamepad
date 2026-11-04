@@ -32,6 +32,9 @@ VERSION = 1
 PACKET_SIZE = 20
 IDLE_RESET_SEC = 1.2
 MAX_PLAYERS = 4          # XInput 最多 4 个手柄
+# 离线超过该秒数就回收槽位。短暂断线（< TTL）仍保持原编号；
+# 超时后才让位给新设备，避免累计 4 台手机后第 5 台永久被拒。
+SLOT_TTL_SEC = 300.0
 
 BTN_MAP = (
     (1 << 0, vg.XUSB_BUTTON.XUSB_GAMEPAD_A),
@@ -275,6 +278,22 @@ def main() -> int:
                     p.neutral = True
                     p.last_seq = -1
                     print(f"\n[{p.idx + 1}P] 输入已回中（{ip}）", flush=True)
+
+            # ---- 槽位回收：长时间离线的玩家把位置让给新设备 ----
+            for ip, p in list(players.items()):
+                if now - p.last_rx <= SLOT_TTL_SEC:
+                    continue
+                unplug = getattr(p.pad, "unplug", None)
+                if callable(unplug):
+                    try:
+                        unplug()
+                    except Exception:  # noqa: BLE001
+                        pass
+                players.pop(ip, None)
+                free_slots.append(p.idx)
+                free_slots.sort()
+                print(f"\n[{p.idx + 1}P] 离线超过 {int(SLOT_TTL_SEC)}s，"
+                      f"已释放槽位（{ip}）", flush=True)
 
             # ---- 每秒状态行（逐玩家）+ 周期性重发玩家编号 ----
             if now - last_report >= 1.0:

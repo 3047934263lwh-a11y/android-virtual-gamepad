@@ -51,7 +51,7 @@ Input packets are **absolute state**, 20 bytes, little-endian, at 125 Hz (≈2.5
 | --- | --- | --- | --- |
 | 0 | 4 | magic | ASCII `VGP1` |
 | 4 | 1 | version | `1` |
-| 5 | 2 | buttons | uint16 bitmask (bit0=A, 1=B, 2=X, 3=Y, 4=LB, 5=RB, 6=BACK, 7=START, 8=L3, 9=R3, 10–13=D-pad, 14=GUIDE) — layout matches `XINPUT_GAMEPAD.wButtons` |
+| 5 | 2 | buttons | uint16 bitmask (bit0=A, 1=B, 2=X, 3=Y, 4=LB, 5=RB, 6=BACK, 7=START, 8=L3, 9=R3, 10–13=D-pad, 14=GUIDE) — custom compact layout, NOT `XINPUT_GAMEPAD.wButtons`; the receiver maps each bit |
 | 7 | 1 | sequence | 0–255, packet-loss stats |
 | 8 | 2 | LX | int16 |
 | 10 | 2 | LY | int16 (**up is positive**) |

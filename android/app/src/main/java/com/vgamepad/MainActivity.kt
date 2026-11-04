@@ -1,10 +1,16 @@
 package com.vgamepad
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Build
 import android.os.Bundle
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -27,6 +33,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.checkbox.MaterialCheckBox
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.slider.Slider
 import kotlin.math.max
@@ -39,6 +46,9 @@ class MainActivity : AppCompatActivity() {
         const val CLICK_CENTER = 0
         const val CLICK_DOUBLE = 1
         const val CLICK_ALWAYS = 2
+        /** 曾收到过回包、但超过该时间没再收到 → 判定链路已断 */
+        const val LINK_LOST_MS = 6000L
+        const val WATCHDOG_MS = 3000L
     }
 
     private lateinit var gamepadView: GamepadView
@@ -85,6 +95,23 @@ class MainActivity : AppCompatActivity() {
     private var resumed = false
     private var playerNo = 0
 
+    // ---- 运行期自动重连（用户主动断开时不再自动连回） ----
+    private var userStopped = false
+    private var autoRetryCount = 0
+    private var lastReplyAt = 0L
+    private var everGotReply = false
+    private var linkError: String? = null
+    private var lastPps = 0
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private val reconnectTask = Runnable { attemptReconnect() }
+    private val watchdog = object : Runnable {
+        override fun run() {
+            checkLink()
+            uiHandler.postDelayed(this, WATCHDOG_MS)
+        }
+    }
+
     private var lastRumbleAt = 0L
     private var lastRumbleAmp = -1
 
@@ -92,42 +119,51 @@ class MainActivity : AppCompatActivity() {
 
     private val listener = object : UdpSender.Listener {
         override fun onConnected(host: String, port: Int) {
-            setLinkDot(true)
-            statusText.text = "已连接 $host:$port"
-            statusText.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.ok))
+            linkError = null
+            applyGyroState()          // 链路建立后立刻按当前开关裁决陀螺仪
+            renderStatus()
         }
 
         override fun onError(message: String) {
-            setLinkDot(false)
-            statusText.text = message
-            statusText.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.err))
+            linkError = message
+            renderStatus()
         }
 
         override fun onStats(pps: Int) {
             if (!sender.isRunning) return
-            setLinkDot(true)
-            statusText.text = "已连接 · $pps pps" +
-                (if (playerNo > 0) " · ${playerNo}P" else "")
-            statusText.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.ok))
+            lastPps = pps
+            renderStatus()
         }
 
         override fun onStopped() {
-            setLinkDot(false)
+            // 旧发送线程迟到的回调：新发送器已在运行时直接忽略，避免熄灭新链路的绿点
+            if (sender.isRunning) return
+            lastPps = 0
+            if (userStopped) {
+                resetConnectUi()
+            } else {
+                // 自动重连等待中：IP/端口保持可编辑，方便改掉填错的地址；
+                // 按钮仍显示「断开」，点它即取消自动重连
+                ipInput.isEnabled = true
+                portInput.isEnabled = true
+            }
+            applyGyroState()          // 链路停止 → 同步停传感器，避免后台耗电
+            renderStatus()
+            if (!userStopped) scheduleReconnect()
         }
 
         override fun onRumble(largeMotor: Int, smallMotor: Int) {
+            markReply()
             handleRumble(largeMotor, smallMotor)
         }
 
         override fun onPlayerAssigned(playerIndex: Int) {
-            // 接收端会周期性重发编号包（解决启动竞态），只在编号变化时提示一次，
-            // 否则 Toast 会每秒弹出造成"不断闪烁"。
+            // 接收端每秒重发编号包：只在编号变化时弹 Toast。
+            // 状态栏统一交给 renderStatus()，不再各自写 text，避免每秒抖动。
             val changed = playerNo != playerIndex
             playerNo = playerIndex
-            setLinkDot(true)
             if (changed) toast("本手机分配为 ${playerIndex}P 手柄")
-            statusText.text = "已连接 · ${playerIndex}P"
-            statusText.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.ok))
+            markReply()
         }
     }
 
@@ -202,6 +238,7 @@ class MainActivity : AppCompatActivity() {
         gamepadView.stickScale = prefs.getFloat("stick_scale", 1f)
         gamepadView.buttonScale = prefs.getFloat("button_scale", 1f)
         gamepadView.loadLayout(prefs.getString("layout_v1", null))
+        gamepadView.loadHidden(prefs.getString("hidden_keys", null))
         gamepadView.hapticsEnabled = hapticsOn
         applyHapticParams()
 
@@ -253,11 +290,14 @@ class MainActivity : AppCompatActivity() {
         }
         editSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
+                // updateEditBar() 会程序化设置 progress；不区分来源会反过来改写刚选中的控件
+                if (!fromUser) return
                 val key = gamepadView.selectedKey ?: return
                 if (gamepadView.editTarget == 0) {
                     gamepadView.setControlScale(key, 0.5f + progress / 100f)
                 } else {
-                    gamepadView.setControlAlpha(key, 0.05f + progress / 150f * 0.95f)
+                    // 0..100 ↔ 0.05..1.0，与 updateEditBar 的回显公式严格互逆
+                    gamepadView.setControlAlpha(key, 0.05f + progress / 100f * 0.95f)
                 }
             }
 
@@ -284,7 +324,8 @@ class MainActivity : AppCompatActivity() {
             editBar.visibility = android.view.View.GONE
         }
 
-        // 一键体验：保存过服务器地址就自动重连，免去每次手动点"连接"
+        // 一键体验：保存过服务器地址就自动连接；之后由自动重连状态机维持链路
+        registerNetworkCallback()
         if (prefs.getString("ip", "")?.isNotBlank() == true) {
             connect()
         }
@@ -359,39 +400,95 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
+        // ---- 隐藏任意按键：勾选后不绘制、不响应触摸、不参与布局编辑 ----
+        container.addView(label("隐藏按键（勾选后该键不显示、也不再响应）"))
+        val hideRows = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val hideBoxes = ArrayList<MaterialCheckBox>()
+        var row: LinearLayout? = null
+        gamepadView.controlKeys().forEachIndexed { i, key ->
+            if (i % 2 == 0) {
+                val r = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
+                }
+                hideRows.addView(r)
+                row = r
+            }
+            val cb = MaterialCheckBox(ctx).apply {
+                text = gamepadView.controlName(key)
+                textSize = 13f
+                setTextColor(ContextCompat.getColor(ctx, R.color.text_primary))
+                // 先赋值再注册监听，避免初始化时误写入偏好
+                isChecked = gamepadView.isHidden(key)
+                layoutParams = LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                )
+                setOnCheckedChangeListener { _, checked ->
+                    gamepadView.setHidden(key, checked)
+                    prefs.edit().putString("hidden_keys", gamepadView.hiddenJson()).apply()
+                }
+            }
+            hideBoxes.add(cb)
+            row?.addView(cb)
+        }
+        container.addView(hideRows)
+        container.addView(
+            MaterialButton(
+                ctx, null,
+                com.google.android.material.R.attr.materialButtonOutlinedStyle
+            ).apply {
+                text = "全部显示"
+                textSize = 13f
+                isAllCaps = false
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+                setOnClickListener {
+                    hideBoxes.forEach { it.isChecked = false }
+                    prefs.edit().putString("hidden_keys", gamepadView.hiddenJson()).apply()
+                }
+            }
+        )
+
         // 右摇杆控制（陀螺仪相关）放在最前，展开即可见
         container.addView(label("右摇杆控制"))
         val gyroSw = toggle("陀螺仪瞄准（转手机 = 转视角）", wantGyro) {
             wantGyro = it
+            prefs.edit().putBoolean("gyro", it).apply()   // 重启后仍保持用户选择
             applyGyroState()
             if (it) {
                 toast("陀螺仪瞄准已开启：转动手机即可转视角")
             }
         }
-        if (gyroAim?.available != true) {
-            gyroSw.isEnabled = false
-            gyroSw.text = "陀螺仪瞄准（此设备不支持）"
-        }
         container.addView(gyroSw)
-        container.addView(label("陀螺仪视角灵敏度"))
-        container.addView(
-            Slider(ctx).apply {
-                valueFrom = 0f
-                valueTo = 100f
-                stepSize = 1f
-                value = gyroSens.roundToInt().toFloat().coerceIn(0f, 100f)
-                setLabelFormatter { "${it.roundToInt()}%" }
-                addOnChangeListener { _, v, _ ->
-                    gyroSens = v
-                    gyroAim?.gain = GyroAim.gainForSens(v / 100f)
-                    prefs.edit().putFloat("gyro_sens", v).apply()
-                }
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                )
+        container.addView(label("陀螺仪视角灵敏度（65 = 标准）"))
+        val gyroSensSlider = Slider(ctx).apply {
+            valueFrom = 0f
+            valueTo = 100f
+            stepSize = 1f
+            value = gyroSens.roundToInt().toFloat().coerceIn(0f, 100f)
+            setLabelFormatter { "${it.roundToInt()}%" }
+            addOnChangeListener { _, v, _ ->
+                gyroSens = v
+                gyroAim?.gain = GyroAim.gainForSens(v / 100f)
+                prefs.edit().putFloat("gyro_sens", v).apply()
             }
-        )
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        container.addView(gyroSensSlider)
         container.addView(label("右摇杆视角灵敏度（50 = 标准）"))
         container.addView(
             pctSlider(stickSens) { v ->
@@ -400,20 +497,26 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit().putFloat("stick_sens", v).apply()
             }
         )
-        container.addView(
-            toggle("陀螺仪俯仰反向（若抬头变低头则打开）",
-                prefs.getBoolean("gyro_invert_y", false)) {
-                prefs.edit().putBoolean("gyro_invert_y", it).apply()
-                gyroAim?.invertY = it
-            }
-        )
-        container.addView(
-            toggle("陀螺仪左右反向（若左转变右转则打开）",
-                prefs.getBoolean("gyro_invert_x", false)) {
-                prefs.edit().putBoolean("gyro_invert_x", it).apply()
-                gyroAim?.invertX = it
-            }
-        )
+        val invYSw = toggle("陀螺仪俯仰反向（若抬头变低头则打开）",
+            prefs.getBoolean("gyro_invert_y", false)) {
+            prefs.edit().putBoolean("gyro_invert_y", it).apply()
+            gyroAim?.invertY = it
+        }
+        container.addView(invYSw)
+        val invXSw = toggle("陀螺仪左右反向（若左转变右转则打开）",
+            prefs.getBoolean("gyro_invert_x", false)) {
+            prefs.edit().putBoolean("gyro_invert_x", it).apply()
+            gyroAim?.invertX = it
+        }
+        container.addView(invXSw)
+        if (gyroAim?.available != true) {
+            // 无传感器时下游三项完全无效，直接禁用而不是让用户白调
+            gyroSw.isEnabled = false
+            gyroSw.text = "陀螺仪瞄准（此设备不支持）"
+            gyroSensSlider.isEnabled = false
+            invYSw.isEnabled = false
+            invXSw.isEnabled = false
+        }
 
         container.addView(label("摇杆按下（LS / RS）触发方式"))
         val clickGroup = android.widget.RadioGroup(ctx).apply {
@@ -655,7 +758,7 @@ class MainActivity : AppCompatActivity() {
             } else {
                 editLabel.text = "已选：${gamepadView.controlName(key)} · 透明度"
                 editSeek.max = 100
-                editSeek.progress = ((gamepadView.controlAlpha(key) - 0.35f) / 0.65f * 100f)
+                editSeek.progress = ((gamepadView.controlAlpha(key) - 0.05f) / 0.95f * 100f)
                     .toInt().coerceIn(0, editSeek.max)
             }
             editSeek.isEnabled = true
@@ -731,6 +834,121 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** 状态栏单一数据源：连接态、错误、重连提示、pps、玩家号只在这里渲染 */
+    private fun renderStatus() {
+        val ok = ContextCompat.getColor(this, R.color.ok)
+        val err = ContextCompat.getColor(this, R.color.err)
+        val dim = ContextCompat.getColor(this, R.color.text_secondary)
+
+        if (!sender.isRunning) {
+            statusText.text = if (userStopped || !resumed) getString(R.string.status_idle)
+                              else "连接中断，正在自动重连…"
+            statusText.setTextColor(dim)
+            setLinkDot(false)
+            return
+        }
+        val e = linkError
+        if (e != null) {
+            statusText.text = e
+            statusText.setTextColor(err)
+            setLinkDot(false)
+            return
+        }
+        if (everGotReply && SystemClock.uptimeMillis() - lastReplyAt > LINK_LOST_MS) {
+            statusText.text = "连接中断，正在自动重连…"
+            statusText.setTextColor(dim)
+            setLinkDot(false)
+            return
+        }
+        // UDP 本身无连接：收到过 PC 回包才算真正「已连接」
+        val linked = everGotReply
+        statusText.text = (if (linked) "已连接" else "正在连接") + " · $lastPps pps" +
+            (if (playerNo > 0) " · ${playerNo}P" else "")
+        statusText.setTextColor(if (linked) ok else dim)
+        setLinkDot(linked)
+    }
+
+    private fun resetConnectUi() {
+        connectBtn.text = getString(R.string.btn_connect)
+        ipInput.isEnabled = true
+        portInput.isEnabled = true
+    }
+
+    /** 收到任何 PC 回包 = 链路确实活着（Python 端每秒下发 VGPP） */
+    private fun markReply() {
+        lastReplyAt = SystemClock.uptimeMillis()
+        everGotReply = true
+        linkError = null
+        autoRetryCount = 0
+        renderStatus()
+    }
+
+    private fun startSender(host: String, port: Int) {
+        if (sender.start(host, port, listener)) {
+            connectBtn.text = getString(R.string.btn_disconnect)
+            ipInput.isEnabled = false
+            portInput.isEnabled = false
+        }
+        renderStatus()
+    }
+
+    private fun scheduleReconnect(delayMs: Long = -1L) {
+        if (userStopped || !resumed) return
+        uiHandler.removeCallbacks(reconnectTask)
+        val backoff = 2000L shl (autoRetryCount.coerceAtMost(3))
+        val d = if (delayMs >= 0) delayMs else backoff.coerceAtMost(15000L)
+        uiHandler.postDelayed(reconnectTask, d)
+        renderStatus()
+    }
+
+    private fun attemptReconnect() {
+        if (userStopped || !resumed || sender.isRunning) return
+        val host = ipInput.text.toString().trim()
+        val port = portInput.text.toString().trim().toIntOrNull() ?: -1
+        if (host.isEmpty() || port !in 1..65535) return
+        autoRetryCount++
+        linkError = null
+        // 新链路先当作「尚未收到回包」，避免刚重连就被 watchdog 判死而无限重启
+        everGotReply = false
+        lastReplyAt = 0L
+        startSender(host, port)
+    }
+
+    private fun checkLink() {
+        if (userStopped || !resumed) return
+        if (!sender.isRunning) {
+            scheduleReconnect()
+            return
+        }
+        // 曾连上过却长时间再无回包：多半是 PC 接收端重启或 Wi-Fi 切换，
+        // 重启发送器以重建 socket / 重新解析地址
+        if (everGotReply && SystemClock.uptimeMillis() - lastReplyAt > LINK_LOST_MS) {
+            sender.stop()
+            scheduleReconnect(500L)
+            renderStatus()
+        }
+    }
+
+    private fun registerNetworkCallback() {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                uiHandler.post {
+                    if (!userStopped && resumed && !sender.isRunning) scheduleReconnect(500L)
+                }
+            }
+        }
+        val req = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        try {
+            cm.registerNetworkCallback(req, cb)
+            networkCallback = cb
+        } catch (e: Exception) {
+            // 个别机型无权限时退化为定时重试，不影响主流程
+        }
+    }
+
     private fun connect() {
         val host = ipInput.text.toString().trim()
         val port = portInput.text.toString().trim().toIntOrNull() ?: -1
@@ -745,25 +963,29 @@ class MainActivity : AppCompatActivity() {
         }
 
         prefs.edit().putString("ip", host).putInt("port", port).apply()
-
-        if (sender.start(host, port, listener)) {
-            connectBtn.text = getString(R.string.btn_disconnect)
-            ipInput.isEnabled = false
-            portInput.isEnabled = false
-            statusText.text = "正在发送…"
-            statusText.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
-        }
+        userStopped = false
+        autoRetryCount = 0
+        everGotReply = false
+        lastReplyAt = 0L
+        linkError = null
+        uiHandler.removeCallbacks(reconnectTask)
+        startSender(host, port)
+        applyGyroState()
     }
 
     private fun disconnect() {
+        userStopped = true
+        uiHandler.removeCallbacks(reconnectTask)
         sender.stop()
         gamepadView.releaseAll()
-        setLinkDot(false)
-        connectBtn.text = getString(R.string.btn_connect)
-        ipInput.isEnabled = true
-        portInput.isEnabled = true
-        statusText.text = getString(R.string.status_idle)
-        statusText.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+        playerNo = 0
+        lastPps = 0
+        everGotReply = false
+        linkError = null
+        autoRetryCount = 0
+        applyGyroState()
+        resetConnectUi()
+        renderStatus()
     }
 
     // ---------- 顶部连接栏展开 / 收起 ----------
@@ -851,6 +1073,12 @@ class MainActivity : AppCompatActivity() {
             hideSettings()
             return
         }
+        if (gamepadView.editMode) {
+            prefs.edit().putString("layout_v1", gamepadView.layoutJson()).apply()
+            gamepadView.editMode = false
+            editBar.visibility = View.GONE
+            return
+        }
         if (barExpanded) {
             collapseBar()
             return
@@ -864,17 +1092,30 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         resumed = true
         applyGyroState()
+        uiHandler.removeCallbacks(watchdog)
+        uiHandler.post(watchdog)
+        // 之前在后台断开的，回到前台立即补一次重连
+        if (!userStopped && !sender.isRunning) scheduleReconnect(500L)
     }
 
     override fun onPause() {
         super.onPause()
         resumed = false
+        uiHandler.removeCallbacks(watchdog)
+        uiHandler.removeCallbacks(reconnectTask)
         // 切后台：输入回中 + 冻结陀螺仪（否则传感器持续驱动视角，放兜里会乱转）
         gamepadView.releaseAll()
         applyGyroState()
     }
 
     override fun onDestroy() {
+        userStopped = true
+        uiHandler.removeCallbacksAndMessages(null)
+        networkCallback?.let { cb ->
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            try { cm?.unregisterNetworkCallback(cb) } catch (e: Exception) { }
+        }
+        networkCallback = null
         sender.stop()
         resumed = false
         gyroAim?.stop()   // 注销传感器监听，避免泄漏

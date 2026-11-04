@@ -58,4 +58,7 @@ except subprocess.TimeoutExpired:
 print(f"--- 发送 {sent} 个报文 ---")
 print(out)
 print("--- 判定 ---")
-print("PASS" if ("[连接]" in out and "pps" in out) else "FAIL: 未看到连接/速率日志")
+# Python 接收端的连接日志是 "[1P] 手机 ... 已连接"（"[连接]" 是 C# 版格式），
+# 两种都接受，避免明明全部报文都被正确解析却恒判 FAIL。
+print("PASS" if (("已连接" in out or "[连接]" in out) and "pps" in out)
+      else "FAIL: 未看到连接/速率日志")

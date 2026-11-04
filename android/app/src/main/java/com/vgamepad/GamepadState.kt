@@ -64,7 +64,7 @@ class GamepadState {
     @Volatile
     var sequence: Int = 0
 
-    // ---- 陀螺仪瞄准（UdpSender 在 useGyro 时以此覆盖右摇杆） ----
+    // ---- 陀螺仪瞄准（UdpSender 在 useGyro 时把此值叠加到触摸右摇杆上） ----
 
     @Volatile
     var useGyro: Boolean = false

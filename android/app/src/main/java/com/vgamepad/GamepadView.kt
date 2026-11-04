@@ -42,9 +42,9 @@ import kotlin.math.min
  *      外层烟熏玻璃（裁剪采样模糊背景 + 烟熏染色）→ 间隙（透出模糊背景）
  *      → 内芯层（第二层磨砂玻璃 + 钛金属细节线）→ 边缘折射高光/暗折
  *      → 低对比银灰描边 → 柔和悬浮投影 → 激活冷色辉光
- *  - 按下：内芯下沉 2dp、染色加深、辉光微亮；长按 450ms：冰川蓝环淡入
+ *  - 按下：内芯下沉 2dp、染色加深、辉光微亮（长按环已按需求移除）
  *  - 松开：130ms 弹回。全部动画仅作用于绘制层。
- *  - 逐键自定义：位置、大小、透明度（编辑滑杆切换"大小/透明度"）。
+ *  - 逐键自定义：位置、大小、透明度（编辑滑杆切换"大小/透明度"）、显隐（设置面板）。
  */
 class GamepadView @JvmOverloads constructor(
     context: Context,
@@ -69,8 +69,8 @@ class GamepadView @JvmOverloads constructor(
         const val Z_LB = 30
         const val Z_RB = 31
         const val Z_BACK = 32
-        const val Z_START = 33
-        const val Z_MENU = 34            // ☰ 菜单键（与 START 同功能，游戏里的 Menu）
+        const val Z_GUIDE = 33           // Home / Xbox 键（Btn.GUIDE，游戏里的「加入」）
+        const val Z_MENU = 34            // ☰ 菜单键（映射 Btn.START，游戏里的 Menu）
         const val Z_LT = 40
         const val Z_RT = 41
 
@@ -122,6 +122,10 @@ class GamepadView @JvmOverloads constructor(
         const val STICK_CLICK_ALWAYS = 2   // 只要操作摇杆就持续按下
         /** 双击判定窗口（毫秒） */
         const val DOUBLE_TAP_MS = 400L
+        /** 扳机：手指纵向移动超过该距离才进入「按位置调节」模式，否则单击即满行程 */
+        const val TRIGGER_DRAG_SLOP_DP = 8f
+        /** 方向键中心死区：距圆心小于该比例时不触发任何方向 */
+        const val DPAD_CENTER_DEAD = 0.18f
 
         /** 按压手感参数 */
         const val GLASS_SINK_DP = 2.0f         // 玻璃下沉（dp）
@@ -135,13 +139,13 @@ class GamepadView @JvmOverloads constructor(
 
         /** 可编辑控件 key */
         val CTRL_KEYS = listOf(
-            "LS", "RS", "DP", "A", "B", "X", "Y", "LB", "RB", "BACK", "START", "MENU", "LT", "RT"
+            "LS", "RS", "DP", "A", "B", "X", "Y", "LB", "RB", "BACK", "MENU", "GUIDE", "LT", "RT"
         )
         val CTRL_NAMES = mapOf(
             "LS" to "左摇杆", "RS" to "右摇杆", "DP" to "方向键",
             "A" to "A", "B" to "B", "X" to "X", "Y" to "Y",
-            "LB" to "LB", "RB" to "RB", "BACK" to "BACK", "START" to "START",
-            "MENU" to "菜单键（☰）",
+            "LB" to "LB", "RB" to "RB", "BACK" to "BACK",
+            "MENU" to "菜单键（☰）", "GUIDE" to "Home 键（Xbox）",
             "LT" to "LT", "RT" to "RT"
         )
     }
@@ -152,6 +156,46 @@ class GamepadView @JvmOverloads constructor(
     private val layout = HashMap<String, Ctrl>()
     private val defCtrl = Ctrl()
     private fun ov(key: String): Ctrl = layout[key] ?: defCtrl
+
+    // ---------- 按键显隐（设置面板「隐藏按键」） ----------
+
+    private val hidden = HashSet<String>()
+
+    fun isHidden(key: String): Boolean = hidden.contains(key)
+
+    /** 隐藏后：不绘制、不命中、不参与布局编辑；同时清掉可能仍按着的按键位 */
+    fun setHidden(key: String, hide: Boolean) {
+        if (hide) hidden.add(key) else hidden.remove(key)
+        if (hide) releaseAll()
+        computeLayout()
+        invalidate()
+    }
+
+    fun loadHidden(json: String?) {
+        hidden.clear()
+        if (!json.isNullOrBlank()) {
+            try {
+                val arr = org.json.JSONArray(json)
+                for (i in 0 until arr.length()) {
+                    val k = arr.optString(i, "")
+                    if (k in CTRL_KEYS) hidden.add(k)
+                }
+            } catch (e: Exception) {
+                // 坏数据按「全部显示」处理
+            }
+        }
+        computeLayout()
+        invalidate()
+    }
+
+    fun hiddenJson(): String {
+        val arr = org.json.JSONArray()
+        for (k in CTRL_KEYS) if (hidden.contains(k)) arr.put(k)
+        return arr.toString()
+    }
+
+    /** 命中判定统一入口：隐藏的控件永不响应触摸 */
+    private fun hit(key: String, inside: Boolean): Boolean = !hidden.contains(key) && inside
 
     // ---------- 几何 ----------
     private val lsCenter = PointF()
@@ -181,9 +225,10 @@ class GamepadView @JvmOverloads constructor(
     private val rectLB = RectF()
     private val rectRB = RectF()
     private val rectBack = RectF()
-    private val rectStart = RectF()
     private val cMenu = PointF()
     private var rMenu = 0f
+    private val cGuide = PointF()
+    private var rGuide = 0f
     private val tmp = RectF()
     private val tmp2 = RectF()
     private val fullRect = RectF()
@@ -269,9 +314,34 @@ class GamepadView @JvmOverloads constructor(
     private var lsInDeadzone = true
     private var rsInDeadzone = true
 
+    // ---- 扳机：单击即满行程，纵向拖动切换为连续调节 ----
+    private var ltDownY = 0f
+    private var rtDownY = 0f
+    private var ltDragging = false
+    private var rtDragging = false
+
     // ---- 摇杆按下（L3/R3）：轻点摇杆触发一次按键脉冲 ----
-    /** 触发方式（0=轻点中心 / 1=双击区域内任意位置 / 2=操作摇杆即按下） */
+    /**
+     * 触发方式（0=轻点中心 / 1=双击区域内任意位置 / 2=操作摇杆即按下）。
+     * 切换时清理 L3/R3 与脉冲/双击状态，避免跨模式卡键或被旧脉冲误清。
+     */
     var stickClickMode = STICK_CLICK_CENTER
+        set(value) {
+            if (field == value) return
+            field = value
+            clearThumbState()
+        }
+
+    private fun clearThumbState() {
+        state.buttons = state.buttons and (Btn.L3 or Btn.R3).inv()
+        lsPulseToken++
+        rsPulseToken++
+        lsLastTapAt = 0L
+        rsLastTapAt = 0L
+        lsTapOk = false
+        rsTapOk = false
+    }
+
     private var lsDownX = 0f
     private var lsDownY = 0f
     private var rsDownX = 0f
@@ -424,6 +494,9 @@ class GamepadView @JvmOverloads constructor(
 
     fun controlName(key: String): String = CTRL_NAMES[key] ?: key
 
+    /** 供设置面板枚举全部可隐藏 / 可编辑的控件 */
+    fun controlKeys(): List<String> = CTRL_KEYS
+
     fun resetControl(key: String) {
         layout.remove(key)
         computeLayout()
@@ -461,7 +534,7 @@ class GamepadView @JvmOverloads constructor(
         Z_LB -> "LB"
         Z_RB -> "RB"
         Z_BACK -> "BACK"
-        Z_START -> "START"
+        Z_GUIDE -> "GUIDE"
         Z_MENU -> "MENU"
         Z_LT -> "LT"
         Z_RT -> "RT"
@@ -535,9 +608,13 @@ class GamepadView @JvmOverloads constructor(
         pill("LB", W * 0.225f, W * 0.180f * kBtn, rectLB)
         pill("RB", W * 0.775f, W * 0.180f * kBtn, rectRB)
         pill("BACK", W * 0.412f, W * 0.080f * kBtn, rectBack)
-        pill("START", W * 0.588f, W * 0.080f * kBtn, rectStart)
 
-        // ☰ 菜单键：独立圆形玻璃键，默认位于 START 右下方（避开肩键与右摇杆）
+        // Home / Xbox 键：顶部正中，取代原 START 的位置（圆形玻璃钮）
+        val guide = ov("GUIDE")
+        rGuide = base * 0.052f * kBtn * guide.s
+        cGuide.set(W * 0.500f + guide.dx * W, pillCy + guide.dy * H)
+
+        // ☰ 菜单键：独立圆形玻璃键（默认位于顶部功能区左下方）
         val menu = ov("MENU")
         rMenu = base * 0.050f * kBtn * menu.s
         cMenu.set(W * 0.340f + menu.dx * W, H * 0.320f + menu.dy * H)
@@ -584,7 +661,7 @@ class GamepadView @JvmOverloads constructor(
         "LS" -> 100f
         "DP" -> 150f
         "BACK" -> 200f
-        "START" -> 240f
+        "GUIDE" -> 240f
         "MENU" -> 260f
         "RS" -> 280f
         "RB" -> 320f
@@ -816,20 +893,25 @@ class GamepadView @JvmOverloads constructor(
             canvas.drawColor(0xFF07080A.toInt())
         }
 
-        drawTrigger(canvas, rectLT, "LT", state.lt, "LT")
-        drawTrigger(canvas, rectRT, "RT", state.rt, "RT")
+        fun shown(k: String) = !isHidden(k)
 
-        drawStick(canvas, lsCenter, lsKnob, lsR, lsKnobR, "LS")
-        drawStick(canvas, rsCenter, rsKnob, rsR, rsKnobR, "RS")
+        if (shown("LT")) drawTrigger(canvas, rectLT, "LT", state.lt, "LT")
+        if (shown("RT")) drawTrigger(canvas, rectRT, "RT", state.rt, "RT")
 
-        drawDpad(canvas)
-        drawAbxy(canvas)
+        if (shown("LS")) drawStick(canvas, lsCenter, lsKnob, lsR, lsKnobR, "LS")
+        if (shown("RS")) drawStick(canvas, rsCenter, rsKnob, rsR, rsKnobR, "RS")
 
-        drawPill(canvas, rectLB, "LB", (state.buttons and Btn.LB) != 0, "LB")
-        drawPill(canvas, rectRB, "RB", (state.buttons and Btn.RB) != 0, "RB")
-        drawPill(canvas, rectBack, "BACK", (state.buttons and Btn.BACK) != 0, "BACK")
-        drawPill(canvas, rectStart, "START", (state.buttons and Btn.START) != 0, "START")
-        drawMenuButton(canvas)
+        if (shown("DP")) drawDpad(canvas)
+        if (shown("A") || shown("B") || shown("X") || shown("Y")) {
+            // 逐个隐藏：drawAbxy 内部按 key 再判一次
+            drawAbxy(canvas)
+        }
+
+        if (shown("LB")) drawPill(canvas, rectLB, "LB", (state.buttons and Btn.LB) != 0, "LB")
+        if (shown("RB")) drawPill(canvas, rectRB, "RB", (state.buttons and Btn.RB) != 0, "RB")
+        if (shown("BACK")) drawPill(canvas, rectBack, "BACK", (state.buttons and Btn.BACK) != 0, "BACK")
+        if (shown("GUIDE")) drawGuideButton(canvas)
+        if (shown("MENU")) drawMenuButton(canvas)
 
         if (editMode) drawEditOverlay(canvas)
     }
@@ -947,7 +1029,7 @@ class GamepadView @JvmOverloads constructor(
     /** ABXY：多层烟熏玻璃 + 高对比彩色字母（身份识别）。 */
     private fun drawFace(c: Canvas, p: PointF, label: String, color: Int, active: Boolean,
                          radius: Float, key: String, a01: Float, ty: Float) {
-        if (radius <= 0f || a01 <= 0f) return
+        if (radius <= 0f || a01 <= 0f || isHidden(key)) return
         val ca01 = a01 * ov(key).a
         val pp = pressP(zoneOfKey(key))
         val cy = p.y + ty
@@ -985,7 +1067,32 @@ class GamepadView @JvmOverloads constructor(
         pText.alpha = 255
     }
 
-    /** ☰ 菜单键：黑曜石玻璃圆钮 + 三条横线，按下与 START 同步高亮。 */
+    /** Home / Xbox 键：圆形玻璃钮 + 细环 + 中央 X，独立占用 Btn.GUIDE。 */
+    private fun drawGuideButton(c: Canvas) {
+        if (rGuide <= 0f) return
+        val (a01, ty) = introOf("GUIDE")
+        if (a01 <= 0f) return
+        val ca01 = a01 * ov("GUIDE").a
+        val active = (state.buttons and Btn.GUIDE) != 0
+        val pp = pressP(Z_GUIDE)
+        val cy = cGuide.y + ty
+
+        layeredGlassCircle(c, cGuide.x, cy, rGuide, pp, ca01, active)
+
+        pStroke.color = fade(if (active || pp > 0.5f) C_TXT_ON else C_TXT, ca01)
+        pStroke.strokeWidth = dp(1.2f)
+        c.drawCircle(cGuide.x, cy, rGuide * 0.52f, pStroke)
+        pText.color = fade(if (active || pp > 0.5f) C_TXT_ON else C_TXT, ca01)
+        pText.textSize = rGuide * 0.72f
+        pText.isFakeBoldText = true
+        val fm = pText.fontMetrics
+        c.drawText("X", cGuide.x, cy - (fm.ascent + fm.descent) / 2f, pText)
+        pText.isFakeBoldText = false
+        pText.alpha = 255
+        pStroke.strokeWidth = dp(1.4f)
+    }
+
+    /** ☰ 菜单键：黑曜石玻璃圆钮 + 三条横线，映射 Btn.START。 */
     private fun drawMenuButton(c: Canvas) {
         if (rMenu <= 0f) return
         val (a01, ty) = introOf("MENU")
@@ -1046,15 +1153,17 @@ class GamepadView @JvmOverloads constructor(
     private fun zoneOfKey(key: String): Int = when (key) {
         "LS" -> Z_LSTICK; "RS" -> Z_RSTICK
         "A" -> Z_A; "B" -> Z_B; "X" -> Z_X; "Y" -> Z_Y
-        "LB" -> Z_LB; "RB" -> Z_RB; "BACK" -> Z_BACK; "START" -> Z_START; "MENU" -> Z_MENU
+        "LB" -> Z_LB; "RB" -> Z_RB; "BACK" -> Z_BACK
+        "MENU" -> Z_MENU; "GUIDE" -> Z_GUIDE
         "LT" -> Z_LT; "RT" -> Z_RT
         else -> Z_NONE
     }
 
     private fun bitByName(key: String): Int = when (key) {
         "A" -> Btn.A; "B" -> Btn.B; "X" -> Btn.X; "Y" -> Btn.Y
-        "LB" -> Btn.LB; "RB" -> Btn.RB; "BACK" -> Btn.BACK; "START" -> Btn.START
-        "MENU" -> Btn.START     // 菜单键与 START 同功能
+        "LB" -> Btn.LB; "RB" -> Btn.RB; "BACK" -> Btn.BACK
+        "MENU" -> Btn.START     // 菜单键复用 START 位（界面已无独立 START 键）
+        "GUIDE" -> Btn.GUIDE
         else -> 0
     }
 
@@ -1073,7 +1182,10 @@ class GamepadView @JvmOverloads constructor(
             "LB" -> r.set(rectLB)
             "RB" -> r.set(rectRB)
             "BACK" -> r.set(rectBack)
-            "START" -> r.set(rectStart)
+            "GUIDE" -> r.set(
+                cGuide.x - rGuide, cGuide.y - rGuide,
+                cGuide.x + rGuide, cGuide.y + rGuide
+            )
             "MENU" -> r.set(cMenu.x - rMenu, cMenu.y - rMenu, cMenu.x + rMenu, cMenu.y + rMenu)
             "LT" -> r.set(rectLT)
             "RT" -> r.set(rectRT)
@@ -1083,6 +1195,7 @@ class GamepadView @JvmOverloads constructor(
 
     private fun drawEditOverlay(c: Canvas) {
         for (key in CTRL_KEYS) {
+            if (isHidden(key)) continue
             val r = outlineOf(key)
             val sel = key == selectedKey
             if (sel) {
@@ -1153,6 +1266,12 @@ class GamepadView @JvmOverloads constructor(
                         Z_RSTICK -> if (hypot(event.getX(i) - rsDownX,
                                               event.getY(i) - rsDownY) > slop
                         ) rsTapOk = false
+                        Z_LT -> if (!ltDragging &&
+                            abs(event.getY(i) - ltDownY) > dp(TRIGGER_DRAG_SLOP_DP)
+                        ) ltDragging = true
+                        Z_RT -> if (!rtDragging &&
+                            abs(event.getY(i) - rtDownY) > dp(TRIGGER_DRAG_SLOP_DP)
+                        ) rtDragging = true
                     }
                     applyZone(zone, event.getX(i), event.getY(i))
                 }
@@ -1260,11 +1379,17 @@ class GamepadView @JvmOverloads constructor(
             Z_A, Z_B, Z_X, Z_Y -> 1.0f
             Z_LB, Z_RB -> 0.85f
             Z_UP, Z_DOWN, Z_LEFT, Z_RIGHT -> 0.75f
-            Z_START, Z_BACK, Z_MENU -> 0.70f
+            Z_BACK, Z_MENU, Z_GUIDE -> 0.70f
             Z_LT, Z_RT -> 0.50f
             else -> 0f
         }
         if (strength > 0f) haptic(strength)
+
+        // 扳机：落点即满行程（点一下就踩到底）；明显上下移动后再按纵向位置连续调节
+        when (zone) {
+            Z_LT -> { ltDownY = y; ltDragging = false }
+            Z_RT -> { rtDownY = y; rtDragging = false }
+        }
 
         applyZone(zone, x, y)
     }
@@ -1273,8 +1398,8 @@ class GamepadView @JvmOverloads constructor(
         when (zone) {
             Z_LSTICK -> setStick(lsKnob, x, y, lsCenter, lsR, true)
             Z_RSTICK -> setStick(rsKnob, x, y, rsCenter, rsR, false)
-            Z_LT -> state.lt = triggerValue(rectLT, y)
-            Z_RT -> state.rt = triggerValue(rectRT, y)
+            Z_LT -> state.lt = if (ltDragging) triggerValue(rectLT, y) else 255
+            Z_RT -> state.rt = if (rtDragging) triggerValue(rectRT, y) else 255
             else -> pressBit(zone)
         }
     }
@@ -1306,11 +1431,11 @@ class GamepadView @JvmOverloads constructor(
                 rsInDeadzone = true
                 onStickReleased(left = false, tap = tap)
             }
-            Z_LT -> state.lt = 0
-            Z_RT -> state.rt = 0
+            Z_LT -> { state.lt = 0; ltDragging = false }
+            Z_RT -> { state.rt = 0; rtDragging = false }
             else -> {
                 val bit = bitOf(zone)
-                // START 与 MENU 共用同一个按键位：另一只手还按着同一位时不要清除
+                // 同一位可能被多个手指/控件按住，最后一根手指抬起时才清位
                 if (bit != 0 && !bitHeldByOther(bit)) {
                     state.buttons = state.buttons and bit.inv()
                 }
@@ -1318,7 +1443,7 @@ class GamepadView @JvmOverloads constructor(
         }
     }
 
-    /** 是否还有其它手指按着同一个按键位（START 与 MENU 共用 START 位）。 */
+    /** 是否还有其它手指按着同一个按键位（防御性：允许将来两个控件共用一位）。 */
     private fun bitHeldByOther(bit: Int): Boolean {
         for (i in 0 until pointers.size()) {
             if (bitOf(pointers.valueAt(i)) == bit) return true
@@ -1343,6 +1468,8 @@ class GamepadView @JvmOverloads constructor(
         rsTapOk = false
         lsLastTapAt = 0L
         rsLastTapAt = 0L
+        ltDragging = false
+        rtDragging = false
         lsPulseToken++
         rsPulseToken++
         state.reset()
@@ -1351,13 +1478,9 @@ class GamepadView @JvmOverloads constructor(
     }
 
     /**
-     * 摇杆按下脉冲：置位 L3/R3，保持 [STICK_PULSE_MS] 后自动复位。
-     * 用递增 token 保证连续两次轻点时，前一次的复位不会提前清掉后一次。
-     */
-    /**
-     * 摇杆抬起：按当前"摇杆按下方式"决定是否产生 LS/RS。
-     *  - 轻点中心：一次轻点即按下（140ms 脉冲）
-     *  - 双击：320ms 内连点两次才按下（单次不触发）
+     * 摇杆抬起：按当前「摇杆按下方式」决定是否产生 LS/RS。
+     *  - 轻点中心：一次轻点即按下（180ms 脉冲）
+     *  - 双击：400ms 内两次，第二次「按下」即触发（单次不触发）
      *  - 操作即按下：抬起时释放（按下的位已在 [bindPointer] 里置位）
      */
     private fun onStickReleased(left: Boolean, tap: Boolean) {
@@ -1392,6 +1515,7 @@ class GamepadView @JvmOverloads constructor(
         state.buttons = if (on) state.buttons or bit else state.buttons and bit.inv()
     }
 
+    /** 置位 L3/R3 并保持 [STICK_PULSE_MS]；token 保证旧脉冲不会提前清掉新脉冲。 */
     private fun pulseThumb(left: Boolean) {
         setThumbBit(left, on = true)
         if (left) {
@@ -1415,24 +1539,28 @@ class GamepadView @JvmOverloads constructor(
 
     private fun zoneAt(x: Float, y: Float, editMode: Boolean = false): Int {
         val faceMul = if (editMode) 1.7f else 1.45f
-        if (hypot(x - cY.x, y - cY.y) <= rY * faceMul) return Z_Y
-        if (hypot(x - cA.x, y - cA.y) <= rA * faceMul) return Z_A
-        if (hypot(x - cX.x, y - cX.y) <= rX * faceMul) return Z_X
-        if (hypot(x - cB.x, y - cB.y) <= rB * faceMul) return Z_B
+        if (hit("Y", hypot(x - cY.x, y - cY.y) <= rY * faceMul)) return Z_Y
+        if (hit("A", hypot(x - cA.x, y - cA.y) <= rA * faceMul)) return Z_A
+        if (hit("X", hypot(x - cX.x, y - cX.y) <= rX * faceMul)) return Z_X
+        if (hit("B", hypot(x - cB.x, y - cB.y) <= rB * faceMul)) return Z_B
 
-        if (rectLB.contains(x, y)) return Z_LB
-        if (rectRB.contains(x, y)) return Z_RB
-        if (rectBack.contains(x, y)) return Z_BACK
-        if (rectStart.contains(x, y)) return Z_START
-        if (rMenu > 0f && hypot(x - cMenu.x, y - cMenu.y) <= rMenu * faceMul) return Z_MENU
+        if (hit("LB", rectLB.contains(x, y))) return Z_LB
+        if (hit("RB", rectRB.contains(x, y))) return Z_RB
+        if (hit("BACK", rectBack.contains(x, y))) return Z_BACK
+        if (hit("GUIDE", rGuide > 0f &&
+                hypot(x - cGuide.x, y - cGuide.y) <= rGuide * faceMul)) return Z_GUIDE
+        if (hit("MENU", rMenu > 0f &&
+                hypot(x - cMenu.x, y - cMenu.y) <= rMenu * faceMul)) return Z_MENU
 
-        if (rectLT.contains(x, y)) return Z_LT
-        if (rectRT.contains(x, y)) return Z_RT
+        if (hit("LT", rectLT.contains(x, y))) return Z_LT
+        if (hit("RT", rectRT.contains(x, y))) return Z_RT
 
         val dx = x - dpCenter.x
         val dy = y - dpCenter.y
         val dpHit = if (editMode) dpR * 1.25f else dpR
-        if (hypot(dx, dy) <= dpHit) {
+        val dpDist = hypot(dx, dy)
+        // 圆心附近不判方向，避免「点正中间 = 按下」这种误触
+        if (hit("DP", dpDist <= dpHit && dpDist > dpR * DPAD_CENTER_DEAD)) {
             return if (abs(dx) > abs(dy)) {
                 if (dx < 0) Z_LEFT else Z_RIGHT
             } else {
@@ -1441,8 +1569,8 @@ class GamepadView @JvmOverloads constructor(
         }
 
         val stickMul = if (editMode) 1.25f else 1.35f
-        if (hypot(x - lsCenter.x, y - lsCenter.y) <= lsR * stickMul) return Z_LSTICK
-        if (hypot(x - rsCenter.x, y - rsCenter.y) <= rsR * stickMul) return Z_RSTICK
+        if (hit("LS", hypot(x - lsCenter.x, y - lsCenter.y) <= lsR * stickMul)) return Z_LSTICK
+        if (hit("RS", hypot(x - rsCenter.x, y - rsCenter.y) <= rsR * stickMul)) return Z_RSTICK
 
         return Z_NONE
     }
@@ -1525,7 +1653,8 @@ class GamepadView @JvmOverloads constructor(
         Z_LB -> Btn.LB
         Z_RB -> Btn.RB
         Z_BACK -> Btn.BACK
-        Z_START, Z_MENU -> Btn.START
+        Z_MENU -> Btn.START
+        Z_GUIDE -> Btn.GUIDE
         Z_UP -> Btn.UP
         Z_DOWN -> Btn.DOWN
         Z_LEFT -> Btn.LEFT

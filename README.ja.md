@@ -48,7 +48,7 @@ Android スマホを仮想 Xbox 360 コントローラーとして使います�
 | --- | --- | --- | --- |
 | 0 | 4 | magic | ASCII `VGP1` |
 | 4 | 1 | version | `1` |
-| 5 | 2 | buttons | ビット 0=A, 1=B, 2=X, 3=Y, 4=LB, 5=RB, 6=BACK, 7=START, 8=L3, 9=R3, 10–13=十字キー, 14=GUIDE（`XINPUT_GAMEPAD.wButtons` と同一レイアウト） |
+| 5 | 2 | buttons | ビット 0=A, 1=B, 2=X, 3=Y, 4=LB, 5=RB, 6=BACK, 7=START, 8=L3, 9=R3, 10–13=十字キー, 14=GUIDE（独自のビット配置。`XINPUT_GAMEPAD.wButtons` とは異なるため、受信側でビットごとに変換） |
 | 7 | 1 | sequence | 0–255、ロス統計用 |
 | 8–15 | 8 | LX/LY/RX/RY | int16 ×4（**LY は上方向が正**） |
 | 16–17 | 2 | LT/RT | uint8 0–255 |

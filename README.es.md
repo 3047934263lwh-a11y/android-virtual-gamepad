@@ -48,7 +48,7 @@ Los paquetes de entrada son **estado absoluto**, de 20 bytes, little-endian, a 1
 | --- | --- | --- | --- |
 | 0 | 4 | magic | ASCII `VGP1` |
 | 4 | 1 | version | `1` |
-| 5 | 2 | buttons | máscara uint16: bit0=A, 1=B, 2=X, 3=Y, 4=LB, 5=RB, 6=BACK, 7=START, 8=L3, 9=R3, 10–13=cruceta, 14=GUIDE (coincide con `XINPUT_GAMEPAD.wButtons`) |
+| 5 | 2 | buttons | máscara uint16: bit0=A, 1=B, 2=X, 3=Y, 4=LB, 5=RB, 6=BACK, 7=START, 8=L3, 9=R3, 10–13=cruceta, 14=GUIDE (disposición propia, NO coincide con `XINPUT_GAMEPAD.wButtons`; el receptor mapea bit a bit) |
 | 7 | 1 | sequence | 0–255, estadística de pérdida |
 | 8–15 | 8 | LX/LY/RX/RY | int16 ×4 (**LY positivo hacia arriba**) |
 | 16–17 | 2 | LT/RT | uint8 0–255 |
