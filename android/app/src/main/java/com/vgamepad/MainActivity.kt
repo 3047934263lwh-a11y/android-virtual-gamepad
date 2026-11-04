@@ -9,6 +9,8 @@ import android.os.Build
 import android.os.Bundle
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -21,6 +23,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.PathInterpolator
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.LinearLayout
@@ -440,38 +443,153 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        // ---- 隐藏任意按键：默认收起，点标题展开，避免一屏铺开 14 个勾选项 ----
+        // ---- 隐藏任意按键：默认收起，Material 风格柔和展开 / 收起 ----
+        // 选项本身、两列布局与全部功能保持不变，只把外层的显隐换成高度动画
+        val hideWrapper = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = true
+            clipToPadding = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0
+            )
+        }
         val hideContent = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
+            visibility = View.INVISIBLE
+            alpha = 0f
+            translationY = -6f * d      // 展开时从这里轻微下移归位，形成层次感
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
-        val hideTitle = TextView(ctx).apply {
-            textSize = 13f
-            setTextColor(ContextCompat.getColor(ctx, R.color.text_secondary))
-            setPadding(0, (16 * d).toInt(), 0, (12 * d).toInt())
-            minHeight = (40 * d).toInt()
+        hideWrapper.addView(hideContent)
+
+        // 标题行：左侧自绘三角 + 文字；展开时浮起一层极淡的 stateLayer 作层次变化
+        val hideTitleRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
             isClickable = true
             isFocusable = true
+            setPadding((6 * d).toInt(), (12 * d).toInt(), (8 * d).toInt(), (12 * d).toInt())
+            minimumHeight = (44 * d).toInt()
+            background = GradientDrawable().apply {
+                cornerRadius = 12f * d
+                setColor(Color.WHITE)
+                alpha = 0                       // 展开时淡入到约 8% 的 stateLayer
+            }
+            // Material 标准按压水波纹（foreground），与淡色 stateLayer 分层叠加
+            val rippleAttr = android.util.TypedValue()
+            ctx.theme.resolveAttribute(android.R.attr.selectableItemBackground, rippleAttr, true)
+            if (rippleAttr.resourceId != 0) {
+                foreground = ContextCompat.getDrawable(ctx, rippleAttr.resourceId)
+            }
         }
+        val triangle = ExpandTriangleView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams((20 * d).toInt(), (20 * d).toInt())
+            rotation = 0f
+        }
+        hideTitleRow.addView(triangle)
+        val hideTitle = TextView(ctx).apply {
+            textSize = 13f
+            setTextColor(ContextCompat.getColor(ctx, R.color.text_secondary))
+            setPadding((10 * d).toInt(), 0, 0, 0)
+        }
+        hideTitleRow.addView(
+            hideTitle,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        )
+
+        val tintCollapsed = ContextCompat.getColor(ctx, R.color.text_secondary)
+        val tintExpanded = ContextCompat.getColor(ctx, R.color.text_primary)
+        // Material standard easing：起步快、收尾缓，避免线性/生硬的跳变
+        val standardEase = PathInterpolator(0.4f, 0f, 0.2f, 1f)
         var hideExpanded = false
+        var hideAnim: ValueAnimator? = null
+
+        fun blendColor(from: Int, to: Int, t: Float): Int {
+            val f = t.coerceIn(0f, 1f)
+            return Color.argb(
+                (Color.alpha(from) + (Color.alpha(to) - Color.alpha(from)) * f).toInt(),
+                (Color.red(from) + (Color.red(to) - Color.red(from)) * f).toInt(),
+                (Color.green(from) + (Color.green(to) - Color.green(from)) * f).toInt(),
+                (Color.blue(from) + (Color.blue(to) - Color.blue(from)) * f).toInt()
+            )
+        }
+
         fun hiddenCount(): Int = gamepadView.controlKeys().count { gamepadView.isHidden(it) }
         fun renderHideTitle() {
             val n = hiddenCount()
-            val suffix = if (n > 0) "（已隐藏 $n 个）" else "（勾选后不显示、也不再响应）"
-            hideTitle.text = (if (hideExpanded) "▾  " else "▸  ") + "隐藏按键" + suffix
+            hideTitle.text = "隐藏按键" +
+                if (n > 0) "（已隐藏 $n 个）" else "（勾选后不显示、也不再响应）"
+            hideTitleRow.contentDescription =
+                if (hideExpanded) "隐藏按键，已展开，点击收起" else "隐藏按键，已收起，点击展开"
         }
         renderHideTitle()
-        hideTitle.setOnClickListener {
-            hideExpanded = !hideExpanded
-            hideContent.visibility = if (hideExpanded) View.VISIBLE else View.GONE
-            renderHideTitle()
+
+        /** 一条时间轴同时驱动高度、内容淡入与轻微下移、三角旋转与变色、标题 stateLayer。 */
+        fun animateHide(expand: Boolean) {
+            hideAnim?.cancel()   // 连续点击时从当前高度接着走，不回弹、不跳变
+
+            val w = hideContent.width.takeIf { it > 0 } ?: container.width
+            val wSpec = View.MeasureSpec.makeMeasureSpec(
+                if (w > 0) w else resources.displayMetrics.widthPixels,
+                View.MeasureSpec.EXACTLY
+            )
+            hideContent.measure(
+                wSpec, View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+            )
+            val full = hideContent.measuredHeight
+            if (expand) {
+                // 固定内容高度：动画期间只裁剪外层，内部两列布局不会逐帧重排
+                hideContent.layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, full
+                )
+                hideContent.visibility = View.VISIBLE
+            }
+
+            val startH = hideWrapper.layoutParams.height.coerceAtLeast(0)
+            val endH = if (expand) full else 0
+            val startRot = triangle.rotation
+            val endRot = if (expand) 90f else 0f
+            val startAlpha = hideContent.alpha
+            val endAlpha = if (expand) 1f else 0f
+            val startY = hideContent.translationY
+            val endY = if (expand) 0f else -6f * d
+            val startLayer = (hideTitleRow.background?.alpha ?: 0).toFloat()
+            val endLayer = if (expand) 22f else 0f
+
+            hideAnim = ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = if (expand) 320L else 260L
+                interpolator = standardEase
+                addUpdateListener {
+                    val f = it.animatedFraction
+                    val lp = hideWrapper.layoutParams
+                    lp.height = (startH + (endH - startH) * f).toInt()
+                    hideWrapper.layoutParams = lp
+
+                    hideContent.alpha = startAlpha + (endAlpha - startAlpha) * f
+                    hideContent.translationY = startY + (endY - startY) * f
+                    triangle.rotation = startRot + (endRot - startRot) * f
+                    // 用「当前展开进度」插值颜色，中途反向点击也能平滑衔接
+                    val progress = if (full > 0) (lp.height.toFloat() / full).coerceIn(0f, 1f) else 0f
+                    triangle.setTint(blendColor(tintCollapsed, tintExpanded, progress))
+                    hideTitleRow.background?.setAlpha(
+                        (startLayer + (endLayer - startLayer) * f).toInt()
+                    )
+
+                    if (f >= 0.999f && !expand) hideContent.visibility = View.INVISIBLE
+                }
+                start()
+            }
         }
-        container.addView(hideTitle)
+
+        hideTitleRow.setOnClickListener {
+            hideExpanded = !hideExpanded
+            renderHideTitle()
+            animateHide(hideExpanded)
+        }
+        container.addView(hideTitleRow)
 
         val hideRows = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -532,7 +650,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
-        container.addView(hideContent)
+        container.addView(hideWrapper)
 
         // 右摇杆控制（陀螺仪相关）放在最前，展开即可见
         container.addView(label("右摇杆控制"))
