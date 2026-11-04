@@ -1424,8 +1424,18 @@ class MainActivity : AppCompatActivity() {
 
     /** 除「手柄」标题外的所有控件显隐：INVISIBLE 保留布局尺寸、但不绘制也不接收触摸。 */
     private fun setBarContentVisible(visible: Boolean) {
-        val v = if (visible) View.VISIBLE else View.INVISIBLE
-        for (i in 1 until connBar.childCount) connBar.getChildAt(i).visibility = v
+        for (i in 1 until connBar.childCount) {
+            val c = connBar.getChildAt(i)
+            if (visible) {
+                c.visibility = View.VISIBLE
+            } else {
+                // 彻底隐藏并复位变换属性，下次入场动画从干净状态开始
+                c.animate().cancel()
+                c.alpha = 1f
+                c.translationX = 0f
+                c.visibility = View.INVISIBLE
+            }
+        }
     }
 
     private fun toggleBar() {
@@ -1492,6 +1502,7 @@ class MainActivity : AppCompatActivity() {
         setBarContentVisible(true)
         showBlur()
         val from = if (barCurrentWidth > 0) barCurrentWidth else barCollapsedWidth
+        // Material 规范：容器 ease-out 从左向右展开 300ms，内容随后错峰淡入滑出
         barAnim = ValueAnimator.ofInt(from, barFullWidth).apply {
             duration = 300L
             interpolator = DecelerateInterpolator(1.6f)
@@ -1503,6 +1514,41 @@ class MainActivity : AppCompatActivity() {
             })
             start()
         }
+        animateContentIn()
+    }
+
+    /**
+     * 内容入场（Material stagger）：容器先动，各控件依次 淡入 + 从左侧 12dp 滑到位，
+     * ease-out 减速曲线，跟随 300ms 的容器展开——消除"瞬间整块出现"的生硬感。
+     */
+    private fun animateContentIn() {
+        val slide = dp(12).toFloat()
+        for (i in 1 until connBar.childCount) {
+            val c = connBar.getChildAt(i)
+            c.animate().cancel()
+            c.alpha = 0f
+            c.translationX = -slide
+            c.animate()
+                .alpha(1f)
+                .translationX(0f)
+                .setStartDelay(40L + (i - 1) * 25L)
+                .setDuration(220L)
+                .setInterpolator(DecelerateInterpolator(1.6f))
+                .start()
+        }
+    }
+
+    /** 内容出场：120ms ease-in 快速淡出，与收拢中的容器宽度动画并行。 */
+    private fun animateContentOut() {
+        for (i in 1 until connBar.childCount) {
+            val c = connBar.getChildAt(i)
+            c.animate().cancel()
+            c.animate()
+                .alpha(0f)
+                .setDuration(120L)
+                .setInterpolator(AccelerateInterpolator(1.5f))
+                .start()
+        }
     }
 
     /** 从右向左收回，终点即「手柄」文字所在的窄条。 */
@@ -1511,6 +1557,7 @@ class MainActivity : AppCompatActivity() {
         barExpanded = false
         barAnim?.cancel()
         hideBlur()
+        animateContentOut()
         barCollapsedWidth = measureCollapsedWidth()
         val from = if (barCurrentWidth > 0) barCurrentWidth else barFullWidth
         barAnim = ValueAnimator.ofInt(from, barCollapsedWidth).apply {
