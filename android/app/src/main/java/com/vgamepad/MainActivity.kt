@@ -28,6 +28,7 @@ import android.view.animation.PathInterpolator
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
@@ -75,6 +76,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var settingsBtn: ImageButton
     private lateinit var statusText: TextView
     private lateinit var connBar: LinearLayout
+    private lateinit var barClip: FrameLayout
     private lateinit var titleBox: LinearLayout
     private lateinit var barTitle: TextView
     private lateinit var statusDot: View
@@ -209,6 +211,7 @@ class MainActivity : AppCompatActivity() {
 
         // ---- 顶部连接栏：默认收起，仅保留原位置「手柄」文字作为唯一开关 ----
         connBar = findViewById(R.id.connBar)
+        barClip = findViewById(R.id.barClip)
         titleBox = findViewById(R.id.titleBox)
         barTitle = findViewById(R.id.barTitle)
         statusDot = findViewById(R.id.statusDot)
@@ -244,11 +247,15 @@ class MainActivity : AppCompatActivity() {
         connBar.post {
             val dm = resources.displayMetrics
             barFullWidth = dm.widthPixels - dp(20)
+            // 内层栏固定全宽：动画期间子控件约束恒定，不再逐帧重排
+            val clp = connBar.layoutParams
+            clp.width = barFullWidth
+            connBar.layoutParams = clp
             barCollapsedWidth = measureCollapsedWidth()
             barCurrentWidth = barCollapsedWidth
             applyBarWidth(barCollapsedWidth)
             setBarContentVisible(false)
-            connBar.visibility = View.VISIBLE
+            barClip.visibility = View.VISIBLE
         }
 
         ipInput.setText(prefs.getString("ip", ""))
@@ -1415,11 +1422,16 @@ class MainActivity : AppCompatActivity() {
         return dp(12) + titleBoxW.toInt() + dp(12)
     }
 
+    /**
+     * 只动画外层裁剪壳 barClip 的宽度：内层 connBar 恒为全宽、子控件约束不变，
+     * 动画期间没有任何子 View 需要重新测量布局（这是之前收起卡顿的根源），
+     * 超出部分由外壳 clipChildren 直接裁掉。
+     */
     private fun applyBarWidth(w: Int) {
         barCurrentWidth = w
-        val lp = connBar.layoutParams
+        val lp = barClip.layoutParams
         lp.width = w
-        connBar.layoutParams = lp
+        barClip.layoutParams = lp
     }
 
     /** 除「手柄」标题外的所有控件显隐：INVISIBLE 保留布局尺寸、但不绘制也不接收触摸。 */
@@ -1502,10 +1514,10 @@ class MainActivity : AppCompatActivity() {
         setBarContentVisible(true)
         showBlur()
         val from = if (barCurrentWidth > 0) barCurrentWidth else barCollapsedWidth
-        // Material 规范：容器 ease-out 从左向右展开 300ms，内容随后错峰淡入滑出
+        // Material 3 emphasized 曲线（0.2,0,0,1）：起步柔、收尾更柔，320ms 从左向右展开
         barAnim = ValueAnimator.ofInt(from, barFullWidth).apply {
-            duration = 300L
-            interpolator = DecelerateInterpolator(1.6f)
+            duration = 320L
+            interpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
             addUpdateListener { applyBarWidth(it.animatedValue as Int) }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
@@ -1518,11 +1530,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 内容入场（Material stagger）：容器先动，各控件依次 淡入 + 从左侧 12dp 滑到位，
-     * ease-out 减速曲线，跟随 300ms 的容器展开——消除"瞬间整块出现"的生硬感。
+     * 内容入场（Material stagger）：容器先动，各控件依次 淡入 + 从左侧滑到位，
+     * M3 emphasized ease-out，跟随容器展开——消除"瞬间整块出现"的生硬感。
      */
     private fun animateContentIn() {
-        val slide = dp(12).toFloat()
+        val slide = dp(10).toFloat()
         for (i in 1 until connBar.childCount) {
             val c = connBar.getChildAt(i)
             c.animate().cancel()
@@ -1531,22 +1543,24 @@ class MainActivity : AppCompatActivity() {
             c.animate()
                 .alpha(1f)
                 .translationX(0f)
-                .setStartDelay(40L + (i - 1) * 25L)
-                .setDuration(220L)
-                .setInterpolator(DecelerateInterpolator(1.6f))
+                .setStartDelay(30L + (i - 1) * 22L)
+                .setDuration(260L)
+                .setInterpolator(PathInterpolator(0.2f, 0f, 0f, 1f))
                 .start()
         }
     }
 
-    /** 内容出场：120ms ease-in 快速淡出，与收拢中的容器宽度动画并行。 */
+    /** 内容出场：140ms 淡出并顺势向左缩回（跟随收拢方向），与容器收拢并行。 */
     private fun animateContentOut() {
+        val slide = dp(8).toFloat()
         for (i in 1 until connBar.childCount) {
             val c = connBar.getChildAt(i)
             c.animate().cancel()
             c.animate()
                 .alpha(0f)
-                .setDuration(120L)
-                .setInterpolator(AccelerateInterpolator(1.5f))
+                .translationX(-slide)
+                .setDuration(140L)
+                .setInterpolator(PathInterpolator(0.3f, 0f, 1f, 1f))
                 .start()
         }
     }
@@ -1560,9 +1574,10 @@ class MainActivity : AppCompatActivity() {
         animateContentOut()
         barCollapsedWidth = measureCollapsedWidth()
         val from = if (barCurrentWidth > 0) barCurrentWidth else barFullWidth
+        // Material 3 emphasized accelerate（0.3,0,1,1）：起步柔，加速收回，300ms
         barAnim = ValueAnimator.ofInt(from, barCollapsedWidth).apply {
-            duration = 280L
-            interpolator = AccelerateInterpolator(1.5f)
+            duration = 300L
+            interpolator = PathInterpolator(0.3f, 0f, 1f, 1f)
             addUpdateListener { applyBarWidth(it.animatedValue as Int) }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {

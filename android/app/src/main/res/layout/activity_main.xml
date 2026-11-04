@@ -20,25 +20,34 @@
         android:scaleType="fitXY"
         android:visibility="gone" />
 
-    <LinearLayout
-        android:id="@+id/connBar"
+    <!-- 动画专用的裁剪外壳：宽度是唯一被动画的属性。内层 connBar 宽度固定，
+         子控件在整个展开/收起动画期间不再被反复测量布局（卡顿根源），只被外壳裁剪 -->
+    <FrameLayout
+        android:id="@+id/barClip"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="top"
         android:layout_marginStart="10dp"
         android:layout_marginTop="10dp"
         android:layout_marginEnd="10dp"
-        android:background="@drawable/bg_glass_bar"
         android:clipChildren="true"
-        android:clipToPadding="true"
-        android:gravity="center_vertical"
-        android:minHeight="46dp"
-        android:orientation="horizontal"
-        android:paddingStart="12dp"
-        android:paddingTop="6dp"
-        android:paddingEnd="10dp"
-        android:paddingBottom="6dp"
         android:visibility="invisible">
+
+        <LinearLayout
+            android:id="@+id/connBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="start|center_vertical"
+            android:background="@drawable/bg_glass_bar"
+            android:clipChildren="true"
+            android:clipToPadding="true"
+            android:gravity="center_vertical"
+            android:minHeight="46dp"
+            android:orientation="horizontal"
+            android:paddingStart="12dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="10dp"
+            android:paddingBottom="6dp">
 
         <!-- 原位置「手柄」文字 + 连接状态点：连接栏唯一的折叠开关，始终可见 -->
         <!-- 文字与圆点作为一个整体居中：左右 padding 对称（12dp/12dp），
@@ -149,7 +158,9 @@
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />
 
-    </LinearLayout>
+        </LinearLayout>
+
+    </FrameLayout>
 
     <LinearLayout
         android:id="@+id/editBar"
