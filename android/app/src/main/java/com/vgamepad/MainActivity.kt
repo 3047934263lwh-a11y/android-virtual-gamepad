@@ -1408,8 +1408,8 @@ class MainActivity : AppCompatActivity() {
         val text = barTitle.text?.toString() ?: ""
         val spacing = barTitle.letterSpacing * barTitle.textSize * text.length
         val textW = barTitle.paint.measureText(text) + spacing
-        // paddingStart20 + 文字 + 间距4 + 圆点8 + paddingEnd8（与布局同源）
-        val titleBoxW = titleBox.paddingStart + titleBox.paddingEnd + textW + dp(DOT_DP) + dp(4)
+        // 左右 padding 对称（12/12），[文字 + 5dp 间距 + 圆点] 整体几何居中（与布局同源）
+        val titleBoxW = titleBox.paddingStart + titleBox.paddingEnd + textW + dp(DOT_DP) + dp(5)
         val marginEnd = (titleBox.layoutParams as? ViewGroup.MarginLayoutParams)?.rightMargin ?: 0
         // 必须容纳：栏 paddingStart + 标题盒宽 + 标题 marginEnd + 栏 paddingEnd，再留 16dp 余量
         return dp(12) + titleBoxW.toInt() + marginEnd + dp(12) + dp(16)
