@@ -4,6 +4,7 @@ import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
@@ -322,6 +323,8 @@ class GamepadView @JvmOverloads constructor(
         }
 
     private val metalShaders = HashMap<Long, Shader>()
+    private val metalShadowCache = HashMap<Long, Bitmap>()
+    private val metalShadowPaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val triPath = Path()
     private val tmp = RectF()
     private val tmp2 = RectF()
@@ -925,16 +928,28 @@ class GamepadView @JvmOverloads constructor(
         c.translate(kx, ky)
         c.scale(sx, sy)
 
-        // 堆叠投影（0 9px 50% / 0 19px 20% / 0 33px 40% 黑）与顶部白光（0 -12px 50% 白）
-        pFill.shader = null
-        pFill.color = Color.argb((102 * a).toInt(), 5, 5, 5)
-        c.drawCircle(0f, shU * 9f, capR, pFill)
-        pFill.color = Color.argb((51 * a).toInt(), 5, 5, 5)
-        c.drawCircle(0f, shU * 19f, capR * 0.96f, pFill)
-        pFill.color = Color.argb((102 * a).toInt(), 5, 5, 5)
-        c.drawCircle(0f, shU * 33f, capR * 0.88f, pFill)
-        pFill.color = Color.argb((128 * a).toInt(), 255, 255, 255)
-        c.drawCircle(0f, -shU * 12f, capR * 0.92f, pFill)
+        // 堆叠投影：真高斯柔影（BlurMaskFilter 一次性烘焙），每帧按推杆实时
+        // 合成——位置随倾斜偏移、随推压伸缩（对应 CSS box-shadow 0 9/19/33px 与 0 -12px 白光）
+        val dark = metalGlowDisc(0xFF0A0A0A.toInt(), capR)
+        val glow = metalGlowDisc(Color.WHITE, capR)
+        val half = glow.width / 2f
+        val shiftX = -tiltX * capR * 0.16f
+        val shScale = 1f - 0.38f * tiltY
+        // 顶部白光
+        tmp.set(-half - shiftX * 0.4f, -shU * 12f * shScale - half,
+                half - shiftX * 0.4f, -shU * 12f * shScale + half)
+        metalShadowPaint.alpha = (128 * a).toInt().coerceIn(0, 255)
+        c.drawBitmap(glow, null, tmp, metalShadowPaint)
+        // 三层黑投影
+        tmp.set(shiftX - half, shU * 9f * shScale - half, shiftX + half, shU * 9f * shScale + half)
+        metalShadowPaint.alpha = (128 * a).toInt().coerceIn(0, 255)
+        c.drawBitmap(dark, null, tmp, metalShadowPaint)
+        tmp.set(shiftX - half, shU * 19f * shScale - half, shiftX + half, shU * 19f * shScale + half)
+        metalShadowPaint.alpha = (51 * a).toInt().coerceIn(0, 255)
+        c.drawBitmap(dark, null, tmp, metalShadowPaint)
+        tmp.set(shiftX - half, shU * 33f * shScale - half, shiftX + half, shU * 33f * shScale + half)
+        metalShadowPaint.alpha = (102 * a).toInt().coerceIn(0, 255)
+        c.drawBitmap(dark, null, tmp, metalShadowPaint)
 
         // 帽体：linear-gradient(0, #86969c, #eff1f1)
         pFill.shader = metalShader((capR * 8).toLong() + 3) {
@@ -1033,6 +1048,27 @@ class GamepadView @JvmOverloads constructor(
             pFill.alpha = 255
             c.restore()
         }
+    }
+
+    /**
+     * 烘焙一张高斯柔边圆盘（软件位图上 BlurMaskFilter，任意 API 都有效），
+     * 供金属摇杆的动态投影 / 白光按帧合成：位置、透明度实时变化，模糊本身只烘焙一次。
+     */
+    private fun metalGlowDisc(color: Int, r: Float): Bitmap {
+        val key = (r * 4).toInt().coerceAtLeast(1).toLong() * 2 +
+            (if (color == Color.WHITE) 1L else 0L)
+        metalShadowCache[key]?.let { return it }
+        val pad = r * 1.8f
+        val size = ((r + pad) * 2f).toInt().coerceAtLeast(8)
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val bc = Canvas(bmp)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            maskFilter = BlurMaskFilter(r * 0.55f, BlurMaskFilter.Blur.NORMAL)
+        }
+        bc.drawCircle(size / 2f, size / 2f, r, p)
+        metalShadowCache[key] = bmp
+        return bmp
     }
 
     private fun metalShader(k: Long, make: () -> Shader): Shader {
