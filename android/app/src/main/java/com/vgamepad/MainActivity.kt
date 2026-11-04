@@ -225,50 +225,14 @@ class MainActivity : AppCompatActivity() {
         ipInput.setText(prefs.getString("ip", ""))
         portInput.setText(prefs.getInt("port", UdpSender.DEFAULT_PORT).toString())
 
-        // 恢复用户自定义的控件大小与震动设置
-        hapticsOn = prefs.getBoolean("haptics", true)
-        hapticStrengthP = prefs.getFloat("haptic_strength", 55f).coerceIn(0f, 100f)
-        hapticDurP = prefs.getFloat("haptic_dur", 26f).coerceIn(0f, 100f)
-        hapticGapP = prefs.getFloat("haptic_gap", 30f).coerceIn(0f, 100f)
-        rumbleOn = prefs.getBoolean("rumble", true)
-        rumbleGainP = prefs.getFloat("rumble_gain", 80f).coerceIn(0f, 100f)
-        rumbleDurP = prefs.getFloat("rumble_dur", 24f).coerceIn(0f, 100f)
-        rumbleGapP = prefs.getFloat("rumble_gap", 32f).coerceIn(0f, 100f)
-        gamepadView.uiScale = prefs.getFloat("ui_scale", 1f)
-        gamepadView.stickScale = prefs.getFloat("stick_scale", 1f)
-        gamepadView.buttonScale = prefs.getFloat("button_scale", 1f)
-        gamepadView.loadLayout(prefs.getString("layout_v1", null))
-        gamepadView.loadHidden(prefs.getString("hidden_keys", null))
-        gamepadView.hapticsEnabled = hapticsOn
-        applyHapticParams()
-
         sender = UdpSender(gamepadView.state)
-
-        // 陀螺仪瞄准：把"转手机"换算成右摇杆等效值，发送时叠加到右摇杆字节
         gyroAim = GyroAim(this)
-        wantGyro = prefs.getBoolean("gyro", false)
-        // 灵敏度改为 0–100%（指数映射到增益）；旧版 gyro_gain 自动迁移一次
-        if (!prefs.contains("gyro_sens")) {
-            val oldGain = prefs.getFloat("gyro_gain", 1.0f)
-            val t = (kotlin.math.ln((oldGain / GyroAim.SENS_MIN_GAIN).toDouble()) /
-                     kotlin.math.ln((GyroAim.SENS_MAX_GAIN / GyroAim.SENS_MIN_GAIN).toDouble()))
-                .toFloat().coerceIn(0f, 1f)
-            prefs.edit().putFloat("gyro_sens", (t * 100f).roundToInt().toFloat()).apply()
-        }
-        gyroSens = prefs.getFloat("gyro_sens", 65f).coerceIn(0f, 100f).roundToInt().toFloat()
-        gyroAim?.gain = GyroAim.gainForSens(gyroSens / 100f)
-        // 右摇杆灵敏度：独立的偏好键与独立增益，改它不会动陀螺仪灵敏度
-        stickSens = prefs.getFloat("stick_sens", 50f).coerceIn(0f, 100f).roundToInt().toFloat()
-        gamepadView.state.stickSens = stickGain(stickSens)
-        stickClickMode = prefs.getInt("stick_click_mode", CLICK_CENTER)
-            .coerceIn(CLICK_CENTER, CLICK_ALWAYS)
-        gamepadView.stickClickMode = stickClickMode
-        gyroAim?.invertY = prefs.getBoolean("gyro_invert_y", false)
-        gyroAim?.invertX = prefs.getBoolean("gyro_invert_x", false)
         gyroAim?.onAim = { rx, ry ->
             gamepadView.state.gyroRx = (rx * 32767).toInt()
             gamepadView.state.gyroRy = (ry * 32767).toInt()
         }
+        // 统一的「偏好 → 内存状态」入口，onCreate 与「恢复默认」共用
+        loadPrefsIntoState()
 
         connectBtn.setOnClickListener {
             if (sender.isRunning) disconnect() else connect()
@@ -329,6 +293,82 @@ class MainActivity : AppCompatActivity() {
         if (prefs.getString("ip", "")?.isNotBlank() == true) {
             connect()
         }
+    }
+
+    /**
+     * 把 SharedPreferences 中的全部可调设置读入内存并应用到各模块。
+     * onCreate 与「恢复默认」共用，保证默认值只在一处定义。
+     * 不含 IP / 端口 —— 那属于连接目标，不是可调设置。
+     */
+    private fun loadPrefsIntoState() {
+        hapticsOn = prefs.getBoolean("haptics", true)
+        hapticStrengthP = prefs.getFloat("haptic_strength", 55f).coerceIn(0f, 100f)
+        hapticDurP = prefs.getFloat("haptic_dur", 26f).coerceIn(0f, 100f)
+        hapticGapP = prefs.getFloat("haptic_gap", 30f).coerceIn(0f, 100f)
+        rumbleOn = prefs.getBoolean("rumble", true)
+        rumbleGainP = prefs.getFloat("rumble_gain", 80f).coerceIn(0f, 100f)
+        rumbleDurP = prefs.getFloat("rumble_dur", 24f).coerceIn(0f, 100f)
+        rumbleGapP = prefs.getFloat("rumble_gap", 32f).coerceIn(0f, 100f)
+
+        gamepadView.uiScale = prefs.getFloat("ui_scale", 1f)
+        gamepadView.stickScale = prefs.getFloat("stick_scale", 1f)
+        gamepadView.buttonScale = prefs.getFloat("button_scale", 1f)
+        gamepadView.loadLayout(prefs.getString("layout_v1", null))
+        gamepadView.loadHidden(prefs.getString("hidden_keys", null))
+        gamepadView.hapticsEnabled = hapticsOn
+        applyHapticParams()
+
+        wantGyro = prefs.getBoolean("gyro", false)
+        // 灵敏度是 0–100 的百分比；旧版 gyro_gain（倍率）一次性迁移
+        if (!prefs.contains("gyro_sens")) {
+            val oldGain = prefs.getFloat("gyro_gain", 1.0f)
+                .coerceIn(GyroAim.SENS_MIN_GAIN, GyroAim.SENS_MAX_GAIN)
+            val t = (kotlin.math.ln((oldGain / GyroAim.SENS_MIN_GAIN).toDouble()) /
+                     kotlin.math.ln((GyroAim.SENS_MAX_GAIN / GyroAim.SENS_MIN_GAIN).toDouble()))
+                .toFloat().coerceIn(0f, 1f)
+            prefs.edit().putFloat("gyro_sens", (t * 100f).roundToInt().toFloat()).apply()
+        }
+        gyroSens = prefs.getFloat("gyro_sens", 65f).coerceIn(0f, 100f).roundToInt().toFloat()
+        gyroAim?.gain = GyroAim.gainForSens(gyroSens / 100f)
+        stickSens = prefs.getFloat("stick_sens", 50f).coerceIn(0f, 100f).roundToInt().toFloat()
+        gamepadView.state.stickSens = stickGain(stickSens)
+        stickClickMode = prefs.getInt("stick_click_mode", CLICK_CENTER)
+            .coerceIn(CLICK_CENTER, CLICK_ALWAYS)
+        gamepadView.stickClickMode = stickClickMode
+        gyroAim?.invertY = prefs.getBoolean("gyro_invert_y", false)
+        gyroAim?.invertX = prefs.getBoolean("gyro_invert_x", false)
+    }
+
+    /** 恢复出厂默认：清空除连接地址外的全部偏好，重新载入默认值并重建设置面板。 */
+    private fun confirmResetAll() {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("恢复默认设置")
+            .setMessage(
+                "将把所有设置恢复为软件默认值：\n" +
+                "按键布局、隐藏的按键、三个尺寸滑杆、两路视角灵敏度、" +
+                "摇杆按下方式、陀螺仪开关与反向、按键触感与游戏震动回传。\n\n" +
+                "当前连接的电脑 IP 和端口会保留，不会断开连接。"
+            )
+            .setNegativeButton("取消", null)
+            .setPositiveButton("恢复默认") { _, _ ->
+                val keepIp = prefs.getString("ip", "") ?: ""
+                val keepPort = prefs.getInt("port", UdpSender.DEFAULT_PORT)
+                prefs.edit().clear().apply()
+                prefs.edit().putString("ip", keepIp).putInt("port", keepPort).apply()
+
+                loadPrefsIntoState()
+                applyGyroState()
+                gamepadView.releaseAll()
+                ipInput.setText(keepIp)
+                portInput.setText(keepPort.toString())
+
+                hideSettings()
+                // 等上一层遮罩淡出结束再重建，避免两层叠加闪烁
+                uiHandler.postDelayed({
+                    if (!isFinishing && !isDestroyed) openSettings()
+                }, 200L)
+            }
+            .show()
     }
 
     // ---------- 设置面板 ----------
@@ -400,8 +440,39 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        // ---- 隐藏任意按键：勾选后不绘制、不响应触摸、不参与布局编辑 ----
-        container.addView(label("隐藏按键（勾选后该键不显示、也不再响应）"))
+        // ---- 隐藏任意按键：默认收起，点标题展开，避免一屏铺开 14 个勾选项 ----
+        val hideContent = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val hideTitle = TextView(ctx).apply {
+            textSize = 13f
+            setTextColor(ContextCompat.getColor(ctx, R.color.text_secondary))
+            setPadding(0, (16 * d).toInt(), 0, (12 * d).toInt())
+            minHeight = (40 * d).toInt()
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            isClickable = true
+            isFocusable = true
+        }
+        var hideExpanded = false
+        fun hiddenCount(): Int = gamepadView.controlKeys().count { gamepadView.isHidden(it) }
+        fun renderHideTitle() {
+            val n = hiddenCount()
+            val suffix = if (n > 0) "（已隐藏 $n 个）" else "（勾选后不显示、也不再响应）"
+            hideTitle.text = (if (hideExpanded) "▾  " else "▸  ") + "隐藏按键" + suffix
+        }
+        renderHideTitle()
+        hideTitle.setOnClickListener {
+            hideExpanded = !hideExpanded
+            hideContent.visibility = if (hideExpanded) View.VISIBLE else View.GONE
+            renderHideTitle()
+        }
+        container.addView(hideTitle)
+
         val hideRows = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
@@ -435,13 +506,14 @@ class MainActivity : AppCompatActivity() {
                 setOnCheckedChangeListener { _, checked ->
                     gamepadView.setHidden(key, checked)
                     prefs.edit().putString("hidden_keys", gamepadView.hiddenJson()).apply()
+                    renderHideTitle()
                 }
             }
             hideBoxes.add(cb)
             row?.addView(cb)
         }
-        container.addView(hideRows)
-        container.addView(
+        hideContent.addView(hideRows)
+        hideContent.addView(
             MaterialButton(
                 ctx, null,
                 com.google.android.material.R.attr.materialButtonOutlinedStyle
@@ -456,9 +528,11 @@ class MainActivity : AppCompatActivity() {
                 setOnClickListener {
                     hideBoxes.forEach { it.isChecked = false }
                     prefs.edit().putString("hidden_keys", gamepadView.hiddenJson()).apply()
+                    renderHideTitle()
                 }
             }
         )
+        container.addView(hideContent)
 
         // 右摇杆控制（陀螺仪相关）放在最前，展开即可见
         container.addView(label("右摇杆控制"))
@@ -641,25 +715,14 @@ class MainActivity : AppCompatActivity() {
 
         container.addView(
             MaterialButton(ctx, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-                text = "恢复默认大小"
+                text = "恢复默认"
                 textSize = 13f
                 isAllCaps = false
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).also { it.topMargin = (18 * d).toInt() }
-                setOnClickListener {
-                    prefs.edit()
-                        .putFloat("ui_scale", 1f)
-                        .putFloat("stick_scale", 1f)
-                        .putFloat("button_scale", 1f)
-                        .apply()
-                    gamepadView.uiScale = 1f
-                    gamepadView.stickScale = 1f
-                    gamepadView.buttonScale = 1f
-                    hideSettings()
-                    openSettings()
-                }
+                setOnClickListener { confirmResetAll() }
             }
         )
 
