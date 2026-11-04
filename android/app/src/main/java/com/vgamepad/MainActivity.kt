@@ -350,6 +350,7 @@ class MainActivity : AppCompatActivity() {
         gamepadView.stickScale = prefs.getFloat("stick_scale", 1f)
         gamepadView.buttonScale = prefs.getFloat("button_scale", 1f)
         gamepadView.stickStyle = prefs.getInt("stick_style", 0)
+        gamepadView.starField = prefs.getBoolean("star_field", true)
         gamepadView.loadLayout(prefs.getString("layout_v1", null))
         gamepadView.loadHidden(prefs.getString("hidden_keys", null))
         gamepadView.hapticsEnabled = hapticsOn
@@ -807,6 +808,14 @@ class MainActivity : AppCompatActivity() {
             toggle("金属立体摇杆（Uiverse 风格）", gamepadView.stickStyle == 1) { on ->
                 gamepadView.stickStyle = if (on) 1 else 0
                 prefs.edit().putInt("stick_style", gamepadView.stickStyle).apply()
+            }
+        )
+
+        container.addView(label("背景星野"))
+        container.addView(
+            toggle("星星向上漂浮动画（更耗电）", gamepadView.starField) { on ->
+                gamepadView.starField = on
+                prefs.edit().putBoolean("star_field", on).apply()
             }
         )
 

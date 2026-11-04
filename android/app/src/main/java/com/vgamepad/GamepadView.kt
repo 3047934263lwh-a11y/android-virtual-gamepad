@@ -643,12 +643,105 @@ class GamepadView @JvmOverloads constructor(
         else -> null
     }
 
+    // ---------- 星野背景（Uiverse jaykdoe starfield：三层星点向上漂移） ----------
+
+    /** 星野动画开关（设置 → 背景星野）。开启时每帧重绘，比静态背景略耗电。 */
+    var starField: Boolean = false
+        set(v) {
+            if (field == v) return
+            field = v
+            syncStarAnim()
+        }
+
+    private var starLayers: Array<Bitmap>? = null
+    private var starTileW = 0
+    private var starTileH = 0
+    private var starDark = true
+    private var starStartMs = 0L
+    private var starRunning = false
+    private val starPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+
+    private val starTick = object : Runnable {
+        override fun run() {
+            if (!starField || !starRunning) return
+            invalidate()
+            postOnAnimation(this)
+        }
+    }
+
+    private fun syncStarAnim() {
+        if (!isAttachedToWindow) return
+        val dark = VgTheme.resolve(context).dark
+        if (starField && width > 0 && height > 0 &&
+            (starLayers == null || starTileW != width || starTileH != height || starDark != dark)
+        ) {
+            buildStars(width, height, dark)
+        }
+        val want = starField && starLayers != null
+        if (want && !starRunning) {
+            starRunning = true
+            starStartMs = SystemClock.uptimeMillis()
+            postOnAnimation(starTick)
+        } else if (!want && starRunning) {
+            starRunning = false
+            invalidate()   // 关掉后立刻清掉残留星点
+        }
+    }
+
+    /** 生成三层星点瓦片（1px 慢层 / 2px 中层 / 3px 快层），数量随屏幕面积缩放。 */
+    private fun buildStars(w: Int, h: Int, dark: Boolean) {
+        starTileW = w
+        starTileH = h
+        starDark = dark
+        val rnd = java.util.Random(20261105L)
+        val tint = if (dark) 0xFFFFFFFF.toInt() else 0xFF51617A.toInt()
+        val baseA = if (dark) 1f else 0.34f
+        val specs = listOf(Triple(1f, 460, 40f), Triple(2f, 210, 20f), Triple(3f, 90, 13.3f))
+        starLayers = specs.map { (size, count, _) ->
+            val bmp = Bitmap.createBitmap(w.coerceAtLeast(1), h.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+            val bc = Canvas(bmp)
+            val p = Paint(Paint.ANTI_ALIAS_FLAG)
+            repeat(count) {
+                val x = rnd.nextFloat() * w
+                val y = rnd.nextFloat() * h
+                val tw = 0.55f + rnd.nextFloat() * 0.45f
+                p.color = Color.argb(
+                    (255 * baseA * tw).toInt(),
+                    Color.red(tint), Color.green(tint), Color.blue(tint)
+                )
+                bc.drawCircle(x, y, size * 0.5f * dp(1f) * (0.7f + rnd.nextFloat() * 0.5f), p)
+            }
+            bmp
+        }.toTypedArray()
+        starStartMs = SystemClock.uptimeMillis()
+    }
+
+    /** 星层向上漂移：三层不同速度（40/20/13.3 dp·s⁻¹），双份瓦片无缝循环。 */
+    private fun drawStars(canvas: Canvas) {
+        val layers = starLayers ?: return
+        val h = starTileH.toFloat()
+        val el = SystemClock.uptimeMillis() - starStartMs
+        val den = resources.displayMetrics.density
+        val speed = floatArrayOf(40f, 20f, 13.3f)
+        for (i in layers.indices) {
+            val off = (el * speed[i] * den / 1000f) % h
+            canvas.drawBitmap(layers[i], 0f, -off, starPaint)
+            canvas.drawBitmap(layers[i], 0f, -off + h, starPaint)
+        }
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         lsKnob.set(0f, 0f)
         rsKnob.set(0f, 0f)
         computeLayout()
         startIntro()
+        syncStarAnim()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        syncStarAnim()
     }
 
     override fun onDetachedFromWindow() {
@@ -658,6 +751,8 @@ class GamepadView @JvmOverloads constructor(
         themeAnim = null
         pulseRunnable?.let { removeCallbacks(it) }
         pulseRunnable = null
+        starRunning = false
+        removeCallbacks(starTick)
         neumo.dispose()
         super.onDetachedFromWindow()
     }
@@ -804,6 +899,7 @@ class GamepadView @JvmOverloads constructor(
 
         // 底色与控件同色系：立体感全部交给双向柔和阴影，避免"塑料玩具"感
         neumo.background(canvas, w, h)
+        if (starField && starRunning) drawStars(canvas)
 
         fun shown(k: String) = !isHidden(k)
 
