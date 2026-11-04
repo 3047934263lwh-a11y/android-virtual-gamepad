@@ -1030,6 +1030,120 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
+        // ---- 分组归卡片（Material 3 设置页模式：分组标题 + 圆角卡片 + 组内分隔线）----
+        // 平铺的 18 个小标题按功能归入 5 张卡片，控件本身与交互逻辑保持不变。
+        // 旧分组小标题（外观/主题色/右摇杆控制/震动等）退役，由卡片标题替代。
+        run {
+            val SEC_LOOK = 0; val SEC_LAYOUT = 1; val SEC_STICK = 2
+            val SEC_HAPTIC = 3; val SEC_RESET = 4
+
+            // 标签 → 所属卡片；drop=true 的旧分组标题不再上屏
+            data class Sec(val id: Int, val drop: Boolean)
+            val labelSec = mapOf(
+                "外观" to Sec(SEC_LOOK, true),
+                "主题色" to Sec(SEC_LOOK, true),
+                "摇杆样式" to Sec(SEC_LOOK, true),
+                "背景动态效果" to Sec(SEC_LOOK, true),
+                "右摇杆控制" to Sec(SEC_STICK, true),
+                "陀螺仪视角灵敏度（65 = 标准）" to Sec(SEC_STICK, false),
+                "右摇杆视角灵敏度（50 = 标准）" to Sec(SEC_STICK, false),
+                "摇杆按下（LS / RS）触发方式" to Sec(SEC_STICK, false),
+                "控件整体大小（50 = 默认）" to Sec(SEC_LAYOUT, false),
+                "摇杆大小（50 = 默认）" to Sec(SEC_LAYOUT, false),
+                "按键大小（ABXY / 肩键 / 方向键 / 扳机，50 = 默认）" to Sec(SEC_LAYOUT, false),
+                "震动" to Sec(SEC_HAPTIC, true),
+                "触感强度" to Sec(SEC_HAPTIC, false),
+                "触感时长" to Sec(SEC_HAPTIC, false),
+                "触感最小间隔" to Sec(SEC_HAPTIC, false),
+                "手机自身振动加强（叠加在游戏回传上）· 强度" to Sec(SEC_HAPTIC, false),
+                "手机自身振动加强 · 时长" to Sec(SEC_HAPTIC, false),
+                "手机自身振动加强 · 最小间隔" to Sec(SEC_HAPTIC, false),
+            )
+
+            val kids = (0 until container.childCount).map { container.getChildAt(it) }
+            val buckets = Array(5) { ArrayList<View>() }
+            var cur = SEC_LOOK
+            for (v in kids) {
+                when {
+                    // 旧分组标题：只切换当前分区，不再上屏
+                    v is TextView && v.text?.toString() in labelSec -> {
+                        cur = labelSec[v.text.toString()]!!.id
+                        if (!labelSec[v.text.toString()]!!.drop) buckets[cur].add(v)
+                    }
+                    v is GlassButton && v.text?.toString()?.startsWith("自定义按键布局") == true ->
+                        buckets[SEC_LAYOUT].add(v)
+                    v is GlassButton -> buckets[SEC_RESET].add(v)
+                    v === hideTitleRow || v === hideWrapper -> buckets[SEC_LAYOUT].add(v)
+                    else -> buckets[cur].add(v)
+                }
+            }
+
+            fun sectionCard(items: List<View>): com.google.android.material.card.MaterialCardView {
+                val card = com.google.android.material.card.MaterialCardView(ctx).apply {
+                    radius = 16f * d
+                    cardElevation = 0f
+                    strokeWidth = (1 * d).toInt().coerceAtLeast(1)
+                    strokeColor = if (theme.dark) 0x14FFFFFF.toInt() else 0x0F000000
+                    setCardBackgroundColor(if (theme.dark) 0x0FFFFFFF.toInt() else 0x66FFFFFF)
+                    isClickable = false
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply { bottomMargin = (10 * d).toInt() }
+                }
+                val inner = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding((4 * d).toInt(), (2 * d).toInt(), (4 * d).toInt(), (6 * d).toInt())
+                }
+                items.forEachIndexed { i, v ->
+                    if (i > 0) {
+                        inner.addView(View(ctx).apply {
+                            layoutParams = LinearLayout.LayoutParams(
+                                LinearLayout.LayoutParams.MATCH_PARENT, 1
+                            ).apply {
+                                marginStart = (12 * d).toInt(); marginEnd = (12 * d).toInt()
+                                topMargin = (4 * d).toInt(); bottomMargin = (4 * d).toInt()
+                            }
+                            background = GradientDrawable().apply {
+                                setColor(if (theme.dark) 0x1AFFFFFF.toInt() else 0x12000000)
+                            }
+                        })
+                    }
+                    (v.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
+                        lp.marginStart = (8 * d).toInt(); lp.marginEnd = (8 * d).toInt()
+                        v.layoutParams = lp
+                    }
+                    inner.addView(v)
+                }
+                card.addView(inner)
+                return card
+            }
+
+            fun sectionHeader(title: String): TextView = TextView(ctx).apply {
+                text = title
+                textSize = 13f
+                letterSpacing = 0.04f
+                setTextColor(ContextCompat.getColor(ctx, R.color.text_secondary))
+                setPadding((6 * d).toInt(), (16 * d).toInt(), (6 * d).toInt(), (6 * d).toInt())
+            }
+
+            val sections = listOf(
+                "外观" to buckets[SEC_LOOK],
+                "布局与大小" to buckets[SEC_LAYOUT],
+                "摇杆与视角" to buckets[SEC_STICK],
+                "震动与触感" to buckets[SEC_HAPTIC],
+            )
+            container.removeAllViews()
+            for ((title, items) in sections) {
+                if (items.isEmpty()) continue
+                container.addView(sectionHeader(title))
+                container.addView(sectionCard(items))
+            }
+            if (buckets[SEC_RESET].isNotEmpty()) {
+                container.addView(sectionCard(buckets[SEC_RESET]))
+            }
+        }
+
         // 内容包进可滚动容器：横屏下设置项超过一屏，否则底部项被裁掉看不见
         // 显式 MATCH_PARENT：默认 WRAP_CONTENT 会让面板内容收缩变窄
         container.layoutParams = android.widget.FrameLayout.LayoutParams(
