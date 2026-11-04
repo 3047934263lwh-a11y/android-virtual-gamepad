@@ -1027,7 +1027,7 @@ class GamepadView @JvmOverloads constructor(
         }
 
         // 25 / 50 / 75 刻度（两侧短刻线）
-        pStroke.color = fade(col.outline, ca01 * 0.60f)
+        pStroke.color = fade(0x4DFFFFFF.toInt(), ca01 * 0.85f)
         pStroke.strokeWidth = dp(1f)
         for (i in 1..3) {
             val y = rr.bottom - rr.height() * (i / 4f)
@@ -1037,7 +1037,8 @@ class GamepadView @JvmOverloads constructor(
 
         c.save()
         c.rotate(-90f, rr.centerX(), rr.centerY())
-        pText.color = fade(OBS_TEXT, ca01)
+        // 未按压时字落在深色井底 → 浅灰；行程填充满到字位 → 切深灰（落在金属灰填充上）
+        pText.color = fade(if (frac > 0.4f) OBS_TEXT else 0xFFE3E3E3.toInt(), ca01)
         pText.textSize = rr.width() * 0.44f
         pText.isFakeBoldText = true
         val fm = pText.fontMetrics
