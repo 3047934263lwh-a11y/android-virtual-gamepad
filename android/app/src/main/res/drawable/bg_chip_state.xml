@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 「手柄」标题胶囊：白色底，运行时按状态 tint 成半透明色块，连接/断开颜色差异明显 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#FFFFFFFF" />
+    <corners android:radius="9dp" />
+</shape>

@@ -1,6 +1,7 @@
 package com.vgamepad
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -26,16 +27,17 @@ import android.view.animation.DecelerateInterpolator
 import android.view.animation.PathInterpolator
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.ColorUtils
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import com.google.android.material.button.MaterialButton
 import com.google.android.material.checkbox.MaterialCheckBox
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.slider.Slider
@@ -52,12 +54,24 @@ class MainActivity : AppCompatActivity() {
         /** 曾收到过回包、但超过该时间没再收到 → 判定链路已断 */
         const val LINK_LOST_MS = 6000L
         const val WATCHDOG_MS = 3000L
+        /** 编辑模式单键大小滑杆上限：450 ↔ 缩放 5.0×（500%），与 GamepadView.MAX_CTRL_SCALE 对应 */
+        const val EDIT_SIZE_SEEK_MAX = 450
+        /** 链路状态着色档位：空闲 / 连接中·重连中 / 已连接 / 断开·错误 */
+        const val LINK_IDLE = 0
+        const val LINK_WARN = 1
+        const val LINK_OK = 2
+        const val LINK_ERR = 3
+        /** 状态点直径（dp）。改这里即可，measureCollapsedWidth 与布局同源 */
+        const val DOT_DP = 10
     }
 
     private lateinit var gamepadView: GamepadView
     private lateinit var ipInput: EditText
     private lateinit var portInput: EditText
-    private lateinit var connectBtn: MaterialButton
+    private lateinit var connectSwitch: SlideSwitch
+    /** visionOS 玻璃底：手柄画面的模糊快照，仅连接栏展开时显示 */
+    private lateinit var blurOverlay: ImageView
+    private var blurAnim: ValueAnimator? = null
     private lateinit var settingsBtn: ImageButton
     private lateinit var statusText: TextView
     private lateinit var connBar: LinearLayout
@@ -188,7 +202,8 @@ class MainActivity : AppCompatActivity() {
         gamepadView.applyTheme(VgTheme.resolve(this))
         ipInput = findViewById(R.id.ipInput)
         portInput = findViewById(R.id.portInput)
-        connectBtn = findViewById(R.id.connectBtn)
+        connectSwitch = findViewById(R.id.connectSwitch)
+        blurOverlay = findViewById(R.id.blurOverlay)
         settingsBtn = findViewById(R.id.settingsBtn)
         statusText = findViewById(R.id.statusText)
 
@@ -197,6 +212,8 @@ class MainActivity : AppCompatActivity() {
         titleBox = findViewById(R.id.titleBox)
         barTitle = findViewById(R.id.barTitle)
         statusDot = findViewById(R.id.statusDot)
+        // 首帧即落定中性色：drawable 默认是白底，不先着色会闪一下白块（必须在控件绑定之后）
+        applyLinkState(LINK_IDLE)
         titleBox.setOnClickListener { toggleBar() }
         // 让连接栏自身消费落在栏内空白处的触摸：否则会穿透到下层全屏 GamepadView，
         // 被误判为"点击外部"而收起（点击栏内任何位置都不应收起）。
@@ -246,17 +263,18 @@ class MainActivity : AppCompatActivity() {
         // 统一的「偏好 → 内存状态」入口，onCreate 与「恢复默认」共用
         loadPrefsIntoState()
 
-        connectBtn.setOnClickListener {
-            if (sender.isRunning) disconnect() else connect()
+        // 开关滑块：点一下即切换，滑块左右滑动由 Material 组件自带动画完成
+        connectSwitch.onCheckedChange = { checked ->
+            if (checked) connect() else disconnect()
         }
         settingsBtn.setOnClickListener { collapseBar(); openSettings() }
 
         editBar = findViewById(R.id.editBar)
         editLabel = findViewById(R.id.editLabel)
         editSeek = findViewById(R.id.editSeek)
-        val resetOne = findViewById<MaterialButton>(R.id.editResetOne)
-        val resetAll = findViewById<MaterialButton>(R.id.editResetAll)
-        val done = findViewById<MaterialButton>(R.id.editDone)
+        val resetOne = findViewById<GlassButton>(R.id.editResetOne)
+        val resetAll = findViewById<GlassButton>(R.id.editResetAll)
+        val done = findViewById<GlassButton>(R.id.editDone)
 
         gamepadView.onSelectionChange = { updateEditBar() }
         // 点击编辑栏文字：切换滑杆目标（大小 ⇄ 透明度）
@@ -270,7 +288,7 @@ class MainActivity : AppCompatActivity() {
                 if (!fromUser) return
                 val key = gamepadView.selectedKey ?: return
                 if (gamepadView.editTarget == 0) {
-                    gamepadView.setControlScale(key, 0.5f + progress / 100f)
+                    gamepadView.setControlScale(key, editProgressToScale(progress))
                 } else {
                     // 0..100 ↔ 0.05..1.0，与 updateEditBar 的回显公式严格互逆
                     gamepadView.setControlAlpha(key, 0.05f + progress / 100f * 0.95f)
@@ -552,13 +570,7 @@ class MainActivity : AppCompatActivity() {
             dotGrad.add(gradient)
             swatchRow.addView(holder)
         }
-        addSwatch(
-            VgTheme.ACCENT_DYNAMIC, 0,
-            intArrayOf(
-                0xFF9DB0D6.toInt(), 0xFFA2C9B2.toInt(),
-                0xFFD9AC91.toInt(), 0xFFB9A6D2.toInt()
-            )
-        )
+        // 只保留五色预设（黄 / 橙 / 绿 / 青 / 紫）；「跟随壁纸」动态取色已移除
         VgTheme.accents.forEachIndexed { i, a ->
             addSwatch(i + 1, if (theme.dark) a.dark else a.light, null)
         }
@@ -567,15 +579,13 @@ class MainActivity : AppCompatActivity() {
 
         // 布局编辑入口放在最上方，展开即可见，避免被滑杆挤出屏幕
         container.addView(
-            MaterialButton(ctx, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-                elevation = 0f
-                stateListAnimator = null
+            GlassButton(ctx).apply {
                 text = "自定义按键布局（逐键拖动 / 调大小）"
                 textSize = 13f
-                isAllCaps = false
+                setPadding((18 * d).toInt(), 0, (18 * d).toInt(), 0)
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
+                    (46 * d).toInt()
                 )
                 setOnClickListener {
                     hideSettings()
@@ -773,18 +783,13 @@ class MainActivity : AppCompatActivity() {
         }
         hideContent.addView(hideRows)
         hideContent.addView(
-            MaterialButton(
-                ctx, null,
-                com.google.android.material.R.attr.materialButtonOutlinedStyle
-            ).apply {
-                elevation = 0f
-                stateListAnimator = null
+            GlassButton(ctx).apply {
                 text = "全部显示"
                 textSize = 13f
-                isAllCaps = false
+                setPadding((18 * d).toInt(), 0, (18 * d).toInt(), 0)
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
+                    (44 * d).toInt()
                 )
                 setOnClickListener {
                     hideBoxes.forEach { it.isChecked = false }
@@ -975,15 +980,13 @@ class MainActivity : AppCompatActivity() {
         )
 
         container.addView(
-            MaterialButton(ctx, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-                elevation = 0f
-                stateListAnimator = null
+            GlassButton(ctx).apply {
                 text = "恢复默认"
                 textSize = 13f
-                isAllCaps = false
+                setPadding((18 * d).toInt(), 0, (18 * d).toInt(), 0)
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
+                    (44 * d).toInt()
                 ).also { it.topMargin = (18 * d).toInt() }
                 setOnClickListener { confirmResetAll() }
             }
@@ -1067,6 +1070,18 @@ class MainActivity : AppCompatActivity() {
         updateEditBar()
     }
 
+    // ---------- 编辑模式：单键大小 ----------
+
+    /**
+     * 单键大小滑杆：progress 0–450 ↔ 缩放 0.5×–5.0×（50% = 默认大小，450 = 500%）。
+     * 写入与回显共用这两个函数，避免公式各写一遍导致互相矛盾。
+     */
+    private fun editProgressToScale(progress: Int): Float =
+        0.5f + progress.coerceIn(0, EDIT_SIZE_SEEK_MAX) / 100f
+
+    private fun editScaleToProgress(scale: Float): Int =
+        ((scale - 0.5f) * 100f).roundToInt().coerceIn(0, EDIT_SIZE_SEEK_MAX)
+
     private fun updateEditBar() {
         val key = gamepadView.selectedKey
         if (key == null) {
@@ -1077,10 +1092,10 @@ class MainActivity : AppCompatActivity() {
             editSeek.isEnabled = false
         } else {
             if (gamepadView.editTarget == 0) {
-                editLabel.text = "已选：${gamepadView.controlName(key)} · 大小"
-                editSeek.max = 150
-                editSeek.progress = ((gamepadView.controlScale(key) - 0.5f) / 1.5f * 150f)
-                    .toInt().coerceIn(0, editSeek.max)
+                val pct = (gamepadView.controlScale(key) * 100).roundToInt()
+                editLabel.text = "已选：${gamepadView.controlName(key)} · 大小 $pct%"
+                editSeek.max = EDIT_SIZE_SEEK_MAX
+                editSeek.progress = editScaleToProgress(gamepadView.controlScale(key))
             } else {
                 editLabel.text = "已选：${gamepadView.controlName(key)} · 透明度"
                 editSeek.max = 100
@@ -1104,8 +1119,35 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** 「手柄」框内状态点：已连接=绿色，未连接=暗灰。 */
-    private fun setLinkDot(on: Boolean) {
-        statusDot.setBackgroundResource(if (on) R.drawable.bg_dot_ok else R.drawable.bg_dot_idle)
+    /**
+     * 链路状态着色：标题胶囊（色块）+ 状态点 + 「手柄」文字 + 状态文字统一取色。
+     * 已连接=绿、连接中/重连中=琥珀、已断开/错误=红，三种状态在任何主题下都能一眼区分。
+     */
+    private fun applyLinkState(state: Int) {
+        val c = ContextCompat.getColor(
+            this,
+            when (state) {
+                LINK_OK -> R.color.ok
+                LINK_WARN -> R.color.warn
+                LINK_ERR -> R.color.err
+                else -> R.color.text_secondary
+            }
+        )
+        val chipAlpha = if (state == LINK_IDLE) 0x24 else 0x3D
+        statusDot.backgroundTintList = ColorStateList.valueOf(c)
+        titleBox.backgroundTintList =
+            ColorStateList.valueOf(ColorUtils.setAlphaComponent(c, chipAlpha))
+        barTitle.setTextColor(c)
+        statusText.setTextColor(c)
+
+        // 连接开关：左=关（已断开）、右=开（连接中 / 已连接）。
+        // 轨道左段取状态色（琥珀 / 绿），右段固定红；滑块滑到哪侧就露出另一侧那段颜色。
+        val on = state == LINK_OK || state == LINK_WARN
+        if (connectSwitch.checked != on) connectSwitch.checked = on
+        connectSwitch.onColor = c
+        connectSwitch.offColor = ContextCompat.getColor(
+            this, if (state == LINK_IDLE) R.color.outline else R.color.err
+        )
     }
 
     private fun obtainVibrator(): Vibrator? = try {
@@ -1168,40 +1210,43 @@ class MainActivity : AppCompatActivity() {
 
     /** 状态栏单一数据源：连接态、错误、重连提示、pps、玩家号只在这里渲染 */
     private fun renderStatus() {
-        val ok = ContextCompat.getColor(this, R.color.ok)
-        val err = ContextCompat.getColor(this, R.color.err)
-        val dim = ContextCompat.getColor(this, R.color.text_secondary)
-
         if (!sender.isRunning) {
-            statusText.text = if (userStopped || !resumed) getString(R.string.status_idle)
-                              else "连接中断，正在自动重连…"
-            statusText.setTextColor(dim)
-            setLinkDot(false)
+            when {
+                // 用户主动点了「断开」→ 红色「已断开」，与连接中的绿色形成明显反差
+                userStopped -> {
+                    statusText.text = "已断开"
+                    applyLinkState(LINK_ERR)
+                }
+                !resumed -> {
+                    statusText.text = getString(R.string.status_idle)
+                    applyLinkState(LINK_IDLE)
+                }
+                else -> {
+                    statusText.text = "连接中断，正在自动重连…"
+                    applyLinkState(LINK_WARN)
+                }
+            }
             return
         }
         val e = linkError
         if (e != null) {
             statusText.text = e
-            statusText.setTextColor(err)
-            setLinkDot(false)
+            applyLinkState(LINK_ERR)
             return
         }
         if (everGotReply && SystemClock.uptimeMillis() - lastReplyAt > LINK_LOST_MS) {
             statusText.text = "连接中断，正在自动重连…"
-            statusText.setTextColor(dim)
-            setLinkDot(false)
+            applyLinkState(LINK_WARN)
             return
         }
         // UDP 本身无连接：收到过 PC 回包才算真正「已连接」
         val linked = everGotReply
         statusText.text = (if (linked) "已连接" else "正在连接") + " · $lastPps pps" +
             (if (playerNo > 0) " · ${playerNo}P" else "")
-        statusText.setTextColor(if (linked) ok else dim)
-        setLinkDot(linked)
+        applyLinkState(if (linked) LINK_OK else LINK_WARN)
     }
 
     private fun resetConnectUi() {
-        connectBtn.text = getString(R.string.btn_connect)
         ipInput.isEnabled = true
         portInput.isEnabled = true
     }
@@ -1217,7 +1262,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun startSender(host: String, port: Int) {
         if (sender.start(host, port, listener)) {
-            connectBtn.text = getString(R.string.btn_disconnect)
             ipInput.isEnabled = false
             portInput.isEnabled = false
         }
@@ -1287,10 +1331,12 @@ class MainActivity : AppCompatActivity() {
 
         if (host.isEmpty()) {
             toast(getString(R.string.err_ip))
+            renderStatus()          // 参数不合法要把开关拨回「关」，不能停在开位
             return
         }
         if (port !in 1..65535) {
             toast(getString(R.string.err_port))
+            renderStatus()
             return
         }
 
@@ -1332,7 +1378,7 @@ class MainActivity : AppCompatActivity() {
         val text = barTitle.text?.toString() ?: ""
         val spacing = barTitle.letterSpacing * barTitle.textSize * text.length
         val textW = barTitle.paint.measureText(text) + spacing
-        val dotW = dp(7) + dp(5)    // 状态点直径 + 与文字的间距
+        val dotW = dp(DOT_DP) + dp(5)    // 状态点直径 + 与文字的间距
         val titleBoxW = titleBox.paddingStart + titleBox.paddingEnd + textW + dotW
         val marginEnd = (titleBox.layoutParams as? ViewGroup.MarginLayoutParams)?.rightMargin ?: 0
         // 必须容纳：栏 paddingStart + 标题盒宽 + 标题 marginEnd + 栏 paddingEnd，再留 4dp 余量
@@ -1360,11 +1406,61 @@ class MainActivity : AppCompatActivity() {
      * 从「手柄」文字处向右展开：动画驱动连接栏宽度（子项尺寸固定、超出部分裁剪），
      * 视觉上即"从左向右依次显现"，且不做位移动画、无位移动画的重叠问题。
      */
+    // ---------- visionOS 玻璃底：展开连接栏时模糊手柄画面 ----------
+
+    /**
+     * 抓一帧手柄画面 → 缩小 → 盒式模糊 → 铺满全屏并淡入。
+     * 用静态快照而不是实时模糊：栏展开期间手柄不参与交互（点手柄区域会收起栏），
+     * 每帧重算模糊在 125Hz 刷新下会明显掉帧。
+     */
+    private fun showBlur() {
+        val base = GlassBlur.snapshot(gamepadView, 4) ?: return
+        val blurred = try {
+            GlassBlur.blur(base, 6, 3)
+        } catch (e: Throwable) {
+            base
+        }
+        blurOverlay.setImageBitmap(blurred)
+        // 轻微压暗：模糊层整体降一档亮度，让上面的玻璃栏浮起来（visionOS 的"背景退后"感）
+        blurOverlay.colorFilter = android.graphics.PorterDuffColorFilter(
+            Color.argb(0x1F, 0, 0, 0), android.graphics.PorterDuff.Mode.SRC_ATOP
+        )
+        blurOverlay.visibility = View.VISIBLE
+        blurOverlay.alpha = 0f
+        blurAnim?.cancel()
+        blurAnim = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 240L
+            interpolator = DecelerateInterpolator(1.6f)
+            addUpdateListener { blurOverlay.alpha = it.animatedValue as Float }
+            start()
+        }
+    }
+
+    private fun hideBlur() {
+        if (blurOverlay.visibility != View.VISIBLE) return
+        blurAnim?.cancel()
+        blurAnim = ValueAnimator.ofFloat(blurOverlay.alpha, 0f).apply {
+            duration = 180L
+            addUpdateListener { blurOverlay.alpha = it.animatedValue as Float }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    // 动画可能被新的展开打断：仅在仍处于「已收起」时清掉画面
+                    if (!barExpanded) {
+                        blurOverlay.visibility = View.GONE
+                        blurOverlay.setImageDrawable(null)
+                    }
+                }
+            })
+            start()
+        }
+    }
+
     private fun expandBar() {
         if (barExpanded) return
         barExpanded = true
         barAnim?.cancel()
         setBarContentVisible(true)
+        showBlur()
         val from = if (barCurrentWidth > 0) barCurrentWidth else barCollapsedWidth
         barAnim = ValueAnimator.ofInt(from, barFullWidth).apply {
             duration = 300L
@@ -1384,6 +1480,7 @@ class MainActivity : AppCompatActivity() {
         if (!barExpanded) return
         barExpanded = false
         barAnim?.cancel()
+        hideBlur()
         barCollapsedWidth = measureCollapsedWidth()
         val from = if (barCurrentWidth > 0) barCurrentWidth else barFullWidth
         barAnim = ValueAnimator.ofInt(from, barCollapsedWidth).apply {

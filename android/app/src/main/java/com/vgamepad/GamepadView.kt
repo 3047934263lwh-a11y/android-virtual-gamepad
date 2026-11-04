@@ -101,6 +101,9 @@ class GamepadView @JvmOverloads constructor(
     }
 
     private companion object {
+        /** 单键缩放区间：50%–500%。上限由编辑模式滑杆 editSeek.max 对应，二者必须一致。 */
+        const val MIN_CTRL_SCALE = 0.5f
+        const val MAX_CTRL_SCALE = 5.0f
         const val Z_NONE = -1
         const val Z_LSTICK = 1
         const val Z_RSTICK = 2
@@ -494,7 +497,7 @@ class GamepadView @JvmOverloads constructor(
                         // s=0 会摇杆除零得 NaN，s 极大会让阴影位图申请 OOM
                         o.optDouble("dx", 0.0).toFloat().coerceIn(-1f, 1f),
                         o.optDouble("dy", 0.0).toFloat().coerceIn(-1f, 1f),
-                        o.optDouble("s", 1.0).toFloat().coerceIn(0.5f, 2.0f),
+                        o.optDouble("s", 1.0).toFloat().coerceIn(MIN_CTRL_SCALE, MAX_CTRL_SCALE),
                         o.optDouble("a", 1.0).toFloat().coerceIn(0.05f, 1f)
                     )
                 }
@@ -535,7 +538,7 @@ class GamepadView @JvmOverloads constructor(
 
     fun setControlScale(key: String, scale: Float) {
         val c = layout.getOrPut(key) { Ctrl() }
-        c.s = scale.coerceIn(0.5f, 2.0f)
+        c.s = scale.coerceIn(MIN_CTRL_SCALE, MAX_CTRL_SCALE)
         computeLayout()
         clampIntoBounds(key, c)
         computeLayout()

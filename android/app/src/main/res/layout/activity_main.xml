@@ -11,6 +11,15 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <!-- 展开连接栏时铺在手柄之上：内容为手柄画面的模糊快照，形成 visionOS 的玻璃底 -->
+    <ImageView
+        android:id="@+id/blurOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:importantForAccessibility="no"
+        android:scaleType="fitXY"
+        android:visibility="gone" />
+
     <LinearLayout
         android:id="@+id/connBar"
         android:layout_width="match_parent"
@@ -19,7 +28,7 @@
         android:layout_marginStart="10dp"
         android:layout_marginTop="10dp"
         android:layout_marginEnd="10dp"
-        android:background="@drawable/bg_bar"
+        android:background="@drawable/bg_glass_bar"
         android:clipChildren="true"
         android:clipToPadding="true"
         android:gravity="center_vertical"
@@ -37,15 +46,16 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginEnd="10dp"
+            android:background="@drawable/bg_chip_state"
             android:clickable="true"
             android:focusable="true"
             android:contentDescription="@string/bar_title"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingStart="4dp"
-            android:paddingTop="6dp"
-            android:paddingEnd="4dp"
-            android:paddingBottom="6dp">
+            android:paddingStart="8dp"
+            android:paddingTop="4dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="4dp">
 
             <TextView
                 android:id="@+id/barTitle"
@@ -61,11 +71,11 @@
 
             <View
                 android:id="@+id/statusDot"
-                android:layout_width="7dp"
-                android:layout_height="7dp"
+                android:layout_width="10dp"
+                android:layout_height="10dp"
                 android:layout_marginStart="5dp"
                 android:importantForAccessibility="no"
-                android:background="@drawable/bg_dot_idle" />
+                android:background="@drawable/bg_dot_state" />
 
         </LinearLayout>
 
@@ -73,7 +83,7 @@
             android:id="@+id/ipInput"
             android:layout_width="140dp"
             android:layout_height="36dp"
-            android:background="@drawable/bg_field"
+            android:background="@drawable/bg_glass_field"
             android:hint="@string/hint_ip"
             android:imeOptions="actionNext"
             android:inputType="text"
@@ -90,7 +100,7 @@
             android:layout_width="60dp"
             android:layout_height="36dp"
             android:layout_marginStart="6dp"
-            android:background="@drawable/bg_field"
+            android:background="@drawable/bg_glass_field"
             android:hint="@string/hint_port"
             android:imeOptions="actionDone"
             android:inputType="number"
@@ -102,30 +112,20 @@
             android:textColorHint="@color/text_secondary"
             android:textSize="13sp" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/connectBtn"
-            android:layout_width="wrap_content"
-            android:layout_height="36dp"
-            android:elevation="0dp"
-            android:stateListAnimator="@null"
-            android:layout_marginStart="8dp"
-            android:minWidth="76dp"
-            android:minHeight="0dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:paddingStart="14dp"
-            android:paddingEnd="14dp"
-            android:text="@string/btn_connect"
-            android:textAllCaps="false"
-            android:textSize="13sp"
-            app:cornerRadius="12dp" />
+        <!-- 连接开关：双色滑块（左=开色 / 右=关色），点击即左右切换 -->
+        <com.vgamepad.SlideSwitch
+            android:id="@+id/connectSwitch"
+            android:layout_width="76dp"
+            android:layout_height="26dp"
+            android:layout_marginStart="10dp"
+            android:contentDescription="@string/connect_switch_desc" />
 
         <ImageButton
             android:id="@+id/settingsBtn"
             android:layout_width="36dp"
             android:layout_height="36dp"
             android:layout_marginStart="6dp"
-            android:background="@drawable/bg_icon_button"
+            android:background="@drawable/bg_glass_icon"
             android:contentDescription="@string/settings_desc"
             android:src="@drawable/ic_settings" />
 
@@ -177,57 +177,37 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="10dp"
             android:contentDescription="@string/edit_seek_desc"
-            android:max="150"
+            android:max="450"
             android:progress="50" />
 
-        <com.google.android.material.button.MaterialButton
+        <com.vgamepad.GlassButton
             android:id="@+id/editResetOne"
-            android:elevation="0dp"
-            android:stateListAnimator="@null"
-            style="?attr/materialButtonOutlinedStyle"
             android:layout_width="wrap_content"
-            android:layout_height="34dp"
+            android:layout_height="38dp"
             android:layout_marginStart="8dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:minWidth="0dp"
             android:paddingStart="10dp"
             android:paddingEnd="10dp"
             android:text="@string/edit_reset_one"
-            android:textAllCaps="false"
             android:textSize="12sp" />
 
-        <com.google.android.material.button.MaterialButton
+        <com.vgamepad.GlassButton
             android:id="@+id/editResetAll"
-            android:elevation="0dp"
-            android:stateListAnimator="@null"
-            style="?attr/materialButtonOutlinedStyle"
             android:layout_width="wrap_content"
-            android:layout_height="34dp"
+            android:layout_height="38dp"
             android:layout_marginStart="6dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:minWidth="0dp"
             android:paddingStart="10dp"
             android:paddingEnd="10dp"
             android:text="@string/edit_reset_all"
-            android:textAllCaps="false"
             android:textSize="12sp" />
 
-        <com.google.android.material.button.MaterialButton
+        <com.vgamepad.GlassButton
             android:id="@+id/editDone"
-            android:elevation="0dp"
-            android:stateListAnimator="@null"
             android:layout_width="wrap_content"
-            android:layout_height="34dp"
+            android:layout_height="38dp"
             android:layout_marginStart="6dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:minWidth="0dp"
             android:paddingStart="12dp"
             android:paddingEnd="12dp"
             android:text="@string/edit_done"
-            android:textAllCaps="false"
             android:textSize="12sp" />
 
     </LinearLayout>

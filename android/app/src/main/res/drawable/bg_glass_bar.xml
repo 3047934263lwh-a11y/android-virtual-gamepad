@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- visionOS 玻璃栏：半透明白底 + 顶部高光渐变 + 1dp 高光描边；
+     展开时底下是模糊后的手柄画面，形成毛玻璃质感 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/glass_fill" />
+            <corners android:radius="23dp" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/glass_stroke" />
+        </shape>
+    </item>
+    <!-- 顶亮底暗的镜面感：玻璃受光的经典处理 -->
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="23dp" />
+            <gradient
+                android:angle="90"
+                android:endColor="#00FFFFFF"
+                android:startColor="#14FFFFFF"
+                android:type="linear" />
+        </shape>
+    </item>
+</layer-list>

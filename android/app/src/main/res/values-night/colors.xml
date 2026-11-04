@@ -16,7 +16,19 @@
     <color name="primary">#FF9DB0D6</color>
     <color name="on_primary">#FF16181C</color>
     <color name="accent">#FF9DB0D6</color>
-    <color name="ok">#FF6FD79A</color>
-    <color name="err">#FFFF8A82</color>
+    <!-- 链路状态三色：必须互相一眼可辨，状态点/标题胶囊/文字共用 -->
+    <!-- 玻璃按钮：斜向高光填充 / 锥形描边 / 细亮边 -->
+    <color name="glass_btn_fill_a">#14FFFFFF</color>
+    <color name="glass_btn_fill_b">#3AFFFFFF</color>
+    <color name="glass_btn_edge">#5CFFFFFF</color>
+    <color name="glass_btn_rim">#26FFFFFF</color>
+    <!-- visionOS 玻璃层：面板填充与 1dp 高光描边 -->
+    <color name="glass_fill">#26000000</color>
+    <color name="glass_field">#1FFFFFFF</color>
+    <color name="glass_icon">#24FFFFFF</color>
+    <color name="glass_stroke">#3DFFFFFF</color>
+    <color name="ok">#FF3DDC84</color>
+    <color name="warn">#FFFFC14D</color>
+    <color name="err">#FFFF6B6B</color>
     <color name="ic_launcher_background">#FF1B1E23</color>
 </resources>

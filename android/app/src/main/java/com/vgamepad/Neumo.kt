@@ -36,6 +36,7 @@ class Neumo(private val density: Float) {
     private val shadowCache = HashMap<Long, Bitmap>(16)
     private val clipRect = RectF()
     private val clipPath = Path()
+    private val shadowDst = RectF()
 
     companion object {
         private const val TYPE_SPHERE = 1
@@ -45,6 +46,12 @@ class Neumo(private val density: Float) {
         private const val TYPE_INNER_TOP = 5
         private const val TYPE_INNER_BOTTOM = 6
         private const val PRESS_STEPS = 12f
+        /**
+         * 柔影位图烘焙上限（像素）。单键可放大到 500%，摇杆直径会到 ~2000px，
+         * 若按 1:1 烘焙，单个位图就要 16MB 且每帧首次绘制会明显卡顿。
+         * 超过该尺寸时按比例缩小烘焙、绘制时再放大——柔影本身是模糊的，视觉上无差别。
+         */
+        private const val SHADOW_BAKE_MAX = 1024f
     }
 
     fun dip(v: Float): Float = v * density
@@ -243,7 +250,19 @@ class Neumo(private val density: Float) {
         // 留白必须与烘焙时一致，且足够大：模糊尾部若被位图边界裁断，
         // 就会在按钮四周露出一圈直角的"方框"。
         val pad = shadowPad(blur)
-        canvas.drawBitmap(bmp, rect.left - pad, rect.top - pad + sink + dip(1.6f), imgPaint)
+        val sc = shadowScale(rect.width(), rect.height(), blur)
+        val shadowTop = rect.top - pad + sink + dip(1.6f)
+        if (sc >= 1f) {
+            canvas.drawBitmap(bmp, rect.left - pad, shadowTop, imgPaint)
+        } else {
+            // 缩小烘焙的位图按原始留白等比放大回去，避免边缘被裁成直角的"方框"
+            shadowDst.set(
+                rect.left - pad, shadowTop,
+                rect.left - pad + (rect.width() + pad * 2f),
+                shadowTop + (rect.height() + pad * 2f)
+            )
+            canvas.drawBitmap(bmp, null, shadowDst, imgPaint)
+        }
         imgPaint.alpha = 255
 
         // 本体：纵向渐变（上亮下暗）
@@ -438,6 +457,12 @@ class Neumo(private val density: Float) {
      */
     private fun shadowPad(blur: Float): Float = blur * 4.0f
 
+    /** 超大控件的柔影烘焙缩放系数（0,1]：超过 [SHADOW_BAKE_MAX] 时按比例缩小烘焙。 */
+    private fun shadowScale(w: Float, h: Float, blur: Float): Float {
+        val full = (if (w > h) w else h) + shadowPad(blur) * 2f
+        return if (full <= SHADOW_BAKE_MAX) 1f else SHADOW_BAKE_MAX / full
+    }
+
     private fun shadowKey(w: Float, h: Float, r: Float, blur: Float, seed: Int): Long =
         key(5, w.toInt() * 8 + h.toInt(), r.toInt() * 4 + seed, (blur * 10).toInt())
     /** 圆角矩形柔影：离屏用 BlurMaskFilter 烘焙一次，运行时直接贴图。 */
@@ -446,9 +471,10 @@ class Neumo(private val density: Float) {
     ): Bitmap {
         shadowCache[key]?.let { if (!it.isRecycled) return it }
         val pad = shadowPad(blur)
+        val sc = shadowScale(w, h, blur)
         // 尺寸上限：布局数据异常（s 极大）时避免在 onDraw 里申请巨型位图直接 OOM
-        val bw = (w + pad * 2).toInt().coerceIn(4, 2048)
-        val bh = (h + pad * 2).toInt().coerceIn(4, 2048)
+        val bw = ((w + pad * 2) * sc).toInt().coerceIn(4, 2048)
+        val bh = ((h + pad * 2) * sc).toInt().coerceIn(4, 2048)
         val bmp = try {
             Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
         } catch (e: Throwable) {
@@ -458,9 +484,12 @@ class Neumo(private val density: Float) {
         val bc = Canvas(bmp)
         val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = col().shadowDark
-            maskFilter = BlurMaskFilter(blur, BlurMaskFilter.Blur.NORMAL)
+            maskFilter = BlurMaskFilter(blur * sc, BlurMaskFilter.Blur.NORMAL)
         }
-        bc.drawRoundRect(pad, pad, pad + w, pad + h, radius, radius, p)
+        bc.drawRoundRect(
+            pad * sc, pad * sc, pad * sc + w * sc, pad * sc + h * sc,
+            radius * sc, radius * sc, p,
+        )
         val prev = shadowCache.put(key, bmp)
         if (prev != null && prev !== bmp && !prev.isRecycled) prev.recycle()
         if (shadowCache.size > 28) {

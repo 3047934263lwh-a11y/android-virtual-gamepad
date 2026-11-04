@@ -3,9 +3,7 @@ package com.vgamepad
 import android.content.Context
 import android.content.res.Configuration
 import android.graphics.Color
-import android.os.Build
 import androidx.appcompat.app.AppCompatDelegate
-import androidx.core.content.ContextCompat
 
 /**
  * 设计令牌（Material Design 3 语义角色 + Neumorphism 阴影色）。
@@ -55,9 +53,7 @@ data class VgAccent(
 
 object VgTheme {
 
-    /** prefs 中表示「跟随系统壁纸取色」的哨兵值 */
-    const val ACCENT_DYNAMIC = -1
-    /** prefs 中表示「使用默认石板蓝」 */
+    /** prefs 中表示「使用默认主题色」 */
     const val ACCENT_DEFAULT = 0
 
     enum class Mode(val pref: Int) {
@@ -68,13 +64,17 @@ object VgTheme {
         }
     }
 
+    /**
+     * 主题色板：只保留黄、橙、绿、青、紫五色。
+     * 已移除「跟随壁纸（动态取色）」与蓝/灰/棕等其它色相——动态取色会把系统高饱和色带进来，
+     * 破坏新拟态要求的低饱和基调，且与 ABXY 四色（绿红蓝黄）撞色。
+     */
     val accents: List<VgAccent> = listOf(
-        VgAccent("石板蓝", 0xFF6C7FA8.toInt(), 0xFF9DB0D6.toInt(), 0xFF44557B.toInt(), 0xFFC6D5F0.toInt()),
-        VgAccent("鼠尾草", 0xFF6E9A82.toInt(), 0xFFA2C9B2.toInt(), 0xFF3F6A54.toInt(), 0xFFC8E6D3.toInt()),
-        VgAccent("青灰", 0xFF5E8F94.toInt(), 0xFF92C3C8.toInt(), 0xFF34646A.toInt(), 0xFFB9E1E5.toInt()),
-        VgAccent("陶土", 0xFFB08268.toInt(), 0xFFD9AC91.toInt(), 0xFF7A5138.toInt(), 0xFFEDCDB6.toInt()),
+        VgAccent("暖黄", 0xFFBEA23C.toInt(), 0xFFE8CE73.toInt(), 0xFF7E6512.toInt(), 0xFFF3E7B4.toInt()),
+        VgAccent("暖橙", 0xFFC67F45.toInt(), 0xFFE8AB7E.toInt(), 0xFF88491A.toInt(), 0xFFF4D5BD.toInt()),
+        VgAccent("苔绿", 0xFF6E9A82.toInt(), 0xFFA2C9B2.toInt(), 0xFF3F6A54.toInt(), 0xFFC8E6D3.toInt()),
+        VgAccent("青瓷", 0xFF5E8F94.toInt(), 0xFF92C3C8.toInt(), 0xFF34646A.toInt(), 0xFFB9E1E5.toInt()),
         VgAccent("梅紫", 0xFF8C7AA6.toInt(), 0xFFB9A6D2.toInt(), 0xFF5B4A73.toInt(), 0xFFD9CAEB.toInt()),
-        VgAccent("古铜", 0xFFA08A5E.toInt(), 0xFFCDB98C.toInt(), 0xFF6E5B33.toInt(), 0xFFE3D3AD.toInt()),
     )
 
     // ---------------- 持久化 ----------------
@@ -87,18 +87,17 @@ object VgTheme {
         applyNightMode(mode)
     }
 
-    /** -1 = 动态取色；0 = 默认；其余为 [accents] 的下标 + 1 */
-    fun accentIndex(ctx: Context): Int = prefs(ctx).getInt("accent_index", ACCENT_DEFAULT)
+    /** 0 = 默认；其余为 [accents] 的下标 + 1。越界（旧版本的动态取色/已删色板）归一到合法区间 */
+    fun accentIndex(ctx: Context): Int =
+        prefs(ctx).getInt("accent_index", ACCENT_DEFAULT).coerceIn(ACCENT_DEFAULT, accents.size)
 
     fun setAccentIndex(ctx: Context, index: Int) {
-        prefs(ctx).edit().putInt("accent_index", index).apply()
+        prefs(ctx).edit().putInt("accent_index", index.coerceIn(ACCENT_DEFAULT, accents.size)).apply()
     }
 
-    fun accentName(index: Int): String = when {
-        index == ACCENT_DYNAMIC -> "跟随壁纸"
-        index <= ACCENT_DEFAULT -> accents[0].name
-        index <= accents.size -> accents[index - 1].name
-        else -> accents[0].name
+    fun accentName(index: Int): String {
+        val i = index.coerceIn(ACCENT_DEFAULT, accents.size)
+        return accents[(i - 1).coerceAtLeast(0)].name
     }
 
     private fun prefs(ctx: Context) =
@@ -206,54 +205,11 @@ object VgTheme {
         return (a shl 24) or (color and 0x00FFFFFF)
     }
 
-    /**
-     * 解析主题色：动态取色（Android 12+ 系统调色板）或预设色板。
-     * 动态色会做一次去饱和处理，避免 Material You 默认高饱和色破坏「低饱和」基调。
-     */
+    /** 解析主题色：只走预设色板（动态取色已移除） */
     private fun accentPair(index: Int, ctx: Context, dark: Boolean): Pair<Int, Int> {
-        if (index == ACCENT_DYNAMIC) {
-            val dyn = dynamicAccent(ctx, dark)
-            if (dyn != 0) {
-                val base = desaturate(dyn, 0.42f)
-                return base to inkOf(base, dark)
-            }
-        }
-        val a = accents[(index - 1).coerceIn(0, accents.size - 1)]
+        val i = index.coerceIn(ACCENT_DEFAULT, accents.size)
+        val a = accents[(i - 1).coerceAtLeast(0)]
         return (if (dark) a.dark else a.light) to (if (dark) a.inkDark else a.inkLight)
     }
 
-    private fun dynamicAccent(ctx: Context, dark: Boolean): Int {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return 0
-        val id = if (dark) android.R.color.system_accent1_200 else android.R.color.system_accent1_600
-        return try {
-            ContextCompat.getColor(ctx, id)
-        } catch (_: Throwable) {
-            0
-        }
-    }
-
-    /** 向中性灰混合，降低饱和度（保留色相识别） */
-    private fun desaturate(color: Int, amount: Float): Int {
-        val gray = (Color.red(color) * 0.299f + Color.green(color) * 0.587f +
-            Color.blue(color) * 0.114f).toInt()
-        val t = amount.coerceIn(0f, 1f)
-        fun mix(c: Int) = (c + (gray - c) * t).toInt().coerceIn(0, 255)
-        return Color.rgb(mix(Color.red(color)), mix(Color.green(color)), mix(Color.blue(color)))
-    }
-
-    /** 为强调色挑一个能当文字用的深/浅变体（WCAG AA ≥ 4.5:1 目标） */
-    private fun inkOf(accent: Int, dark: Boolean): Int {
-        if (dark) {
-            // 深色底：提亮到能读
-            return mixWith(accent, Color.WHITE, 0.45f)
-        }
-        // 浅色底：压暗到能读
-        return mixWith(accent, Color.BLACK, 0.42f)
-    }
-
-    private fun mixWith(c: Int, target: Int, t: Float): Int = Color.rgb(
-        (Color.red(c) + (Color.red(target) - Color.red(c)) * t).toInt().coerceIn(0, 255),
-        (Color.green(c) + (Color.green(target) - Color.green(c)) * t).toInt().coerceIn(0, 255),
-        (Color.blue(c) + (Color.blue(target) - Color.blue(c)) * t).toInt().coerceIn(0, 255),
-    )
 }
