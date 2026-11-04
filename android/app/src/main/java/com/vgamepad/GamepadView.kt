@@ -510,19 +510,22 @@ class GamepadView @JvmOverloads constructor(
         }
         if (r <= 0f) return
         val d = resources.displayMetrics.density
+        val rng = java.util.Random()
         val n = 6
         val x0 = FloatArray(n); val y0 = FloatArray(n)
         val x1 = FloatArray(n); val y1 = FloatArray(n)
-        val size = floatArrayOf(7f, 4.5f, 2f, 5f, 4.5f, 2f).map { it * d }.toFloatArray()
-        // 六颗星绕按键一圈：起点贴边缘、终点飞出 1.7~2.3 倍半径（90° = 正下方）
+        val size = FloatArray(n)
+        // 每次散出的位置/大小全部随机：起始角随机，六颗星均匀铺开 ±24° 抖动
+        val baseDeg = rng.nextInt(360)
         for (i in 0 until n) {
-            val baseDeg = 55f + i * 60f
-            val a = Math.toRadians((baseDeg + (i % 2) * 14f - 7f).toDouble())
-            val rr0 = r * (0.82f + 0.14f * (i % 3) / 2f)
-            val rr1 = r * (1.75f + 0.28f * (i % 3))
+            val deg = baseDeg + i * 60f + rng.nextInt(48) - 24f
+            val a = Math.toRadians(deg.toDouble())
+            val rr0 = r * (0.78f + rng.nextFloat() * 0.18f)   // 起点：贴按键边缘
+            val rr1 = r * (1.70f + rng.nextFloat() * 0.60f)   // 终点：1.7~2.3 倍半径外
             val cos = Math.cos(a).toFloat(); val sin = Math.sin(a).toFloat()
             x0[i] = cx + cos * rr0; y0[i] = cy + sin * rr0
             x1[i] = cx + cos * rr1; y1[i] = cy + sin * rr1
+            size[i] = (2f + rng.nextFloat() * 5f) * d          // 2~7dp 随机大小
         }
         bursts.add(StarBurst(SystemClock.uptimeMillis(), x0, y0, x1, y1, size))
         ensurePressTick()
