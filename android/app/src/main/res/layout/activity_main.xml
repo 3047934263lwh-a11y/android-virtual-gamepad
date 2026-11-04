@@ -57,6 +57,11 @@
             android:paddingEnd="8dp"
             android:paddingBottom="4dp">
 
+            <View
+                android:id="@+id/chipSpacer"
+                android:layout_width="15dp"
+                android:layout_height="1dp" />
+
             <TextView
                 android:id="@+id/barTitle"
                 android:layout_width="wrap_content"

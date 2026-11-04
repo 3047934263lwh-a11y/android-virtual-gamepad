@@ -378,6 +378,46 @@ class GamepadView @JvmOverloads constructor(
 
     // ---------- 按压状态 ----------
 
+    /**
+     * 按压看门狗：每帧校验「按下时间戳里的 zone」是否仍有手指绑定。
+     * 触摸事件的 UP 偶发丢失（多指竞态 / 手势被吞 / 拦截）时，按键会像卡住一样
+     * 一直保持按下；这里强制释放（视觉回弹 + 清游戏按键位 + 摇杆/扳机归零）。
+     */
+    private fun sweepStalePresses() {
+        var i = 0
+        while (i < zoneDownAt.size()) {
+            val zone = zoneDownAt.keyAt(i)
+            var held = false
+            for (j in 0 until pointers.size()) {
+                if (pointers.valueAt(j) == zone) { held = true; break }
+            }
+            if (held) { i++; continue }
+            // 幽灵按压：该 zone 已无任何手指 → 释放
+            zoneReleaseAt.put(zone, SystemClock.uptimeMillis())
+            zoneDownAt.removeAt(i)
+            when (zone) {
+                Z_LSTICK -> {
+                    lsKnob.set(0f, 0f); state.lx = 0; state.ly = 0
+                    lsInDeadzone = true; lsTapOk = false
+                    if (stickClickMode == STICK_CLICK_ALWAYS) setThumbBit(left = true, on = false)
+                }
+                Z_RSTICK -> {
+                    rsKnob.set(0f, 0f); state.rx = 0; state.ry = 0
+                    rsInDeadzone = true; rsTapOk = false
+                    if (stickClickMode == STICK_CLICK_ALWAYS) setThumbBit(left = false, on = false)
+                }
+                Z_LT -> { state.lt = 0; ltDragging = false }
+                Z_RT -> { state.rt = 0; rtDragging = false }
+                else -> {
+                    val bit = bitOf(zone)
+                    if (bit != 0 && !bitHeldByOther(bit)) {
+                        state.buttons = state.buttons and bit.inv()
+                    }
+                }
+            }
+        }
+    }
+
     private fun pressP(zone: Int): Float {
         val now = SystemClock.uptimeMillis()
         val down = zoneDownAt.get(zone, 0L)
@@ -1008,6 +1048,7 @@ class GamepadView @JvmOverloads constructor(
         if (w <= 0f) return
 
         // 底色与控件同色系：立体感全部交给双向柔和阴影，避免"塑料玩具"感
+        sweepStalePresses()
         neumo.background(canvas, w, h)
         if (bgEffect != 0 && starRunning) drawStars(canvas)
 

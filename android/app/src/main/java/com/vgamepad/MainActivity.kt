@@ -1411,8 +1411,8 @@ class MainActivity : AppCompatActivity() {
         val dotW = dp(DOT_DP) + dp(5)    // 状态点直径 + 与文字的间距
         val titleBoxW = titleBox.paddingStart + titleBox.paddingEnd + textW + dotW
         val marginEnd = (titleBox.layoutParams as? ViewGroup.MarginLayoutParams)?.rightMargin ?: 0
-        // 必须容纳：栏 paddingStart + 标题盒宽 + 标题 marginEnd + 栏 paddingEnd，再留 4dp 余量
-        return dp(12) + titleBoxW.toInt() + marginEnd + dp(12) + dp(4)
+        // 必须容纳：栏 paddingStart + 标题盒宽 + 标题 marginEnd + 栏 paddingEnd，再留 10dp 余量
+        return dp(12) + titleBoxW.toInt() + marginEnd + dp(12) + dp(10)
     }
 
     private fun applyBarWidth(w: Int) {
