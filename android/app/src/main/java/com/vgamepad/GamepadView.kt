@@ -439,7 +439,7 @@ class GamepadView @JvmOverloads constructor(
     private val pressTick = object : Runnable {
         override fun run() {
             val now = SystemClock.uptimeMillis()
-            var pending = zoneDownAt.size() > 0
+            var pending = zoneDownAt.size() > 0 || bursts.isNotEmpty()
             if (!pending) {
                 for (i in 0 until zoneReleaseAt.size()) {
                     if (now - zoneReleaseAt.valueAt(i) < RELEASE_SETTLE_MS.toLong()) {
@@ -461,6 +461,108 @@ class GamepadView @JvmOverloads constructor(
         if (pressTickRunning) return
         pressTickRunning = true
         postDelayed(pressTick, 16L)
+    }
+
+    // ---- 按键星星飞散（Uiverse dalbrechtmartin，仅取飞散动效）----
+    /** 用户开关：按下非摇杆按键时星星向外散出 */
+    var starBurstEnabled = true
+
+    private class StarBurst(
+        val start: Long,
+        val x0: FloatArray, val y0: FloatArray,
+        val x1: FloatArray, val y1: FloatArray,
+        val size: FloatArray,
+    )
+
+    private val bursts = ArrayList<StarBurst>()
+    private val burstPath = Path()
+    private val pStar = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFFFFFDEF.toInt()          // CSS .fil0 #fffdef 奶白
+        style = Paint.Style.FILL
+    }
+
+    private val burstLifeMs = 800f          // CSS transition 0.8s
+    private val burstEase = PathInterpolator(0.05f, 0.83f, 0.43f, 0.96f)
+
+    /** 在按键边缘生成一簇 6 颗四角星：绕按键一圈分布（偏重底部），向外飞散，与手指落点无关 */
+    private fun spawnStarBurst(zone: Int) {
+        if (!starBurstEnabled) return
+        val cx: Float
+        val cy: Float
+        val r: Float
+        when (zone) {
+            Z_A -> { cx = cA.x; cy = cA.y; r = rA }
+            Z_B -> { cx = cB.x; cy = cB.y; r = rB }
+            Z_X -> { cx = cX.x; cy = cX.y; r = rX }
+            Z_Y -> { cx = cY.x; cy = cY.y; r = rY }
+            Z_GUIDE -> { cx = cGuide.x; cy = cGuide.y; r = rGuide }
+            Z_MENU -> { cx = cMenu.x; cy = cMenu.y; r = rMenu }
+            Z_LB -> { cx = rectLB.centerX(); cy = rectLB.centerY(); r = min(rectLB.width(), rectLB.height()) * 0.5f }
+            Z_RB -> { cx = rectRB.centerX(); cy = rectRB.centerY(); r = min(rectRB.width(), rectRB.height()) * 0.5f }
+            Z_BACK -> { cx = rectBack.centerX(); cy = rectBack.centerY(); r = min(rectBack.width(), rectBack.height()) * 0.5f }
+            Z_LT -> { cx = rectLT.centerX(); cy = rectLT.centerY(); r = rectLT.height() * 0.5f }
+            Z_RT -> { cx = rectRT.centerX(); cy = rectRT.centerY(); r = rectRT.height() * 0.5f }
+            Z_UP -> { cx = dpCenter.x; cy = dpCenter.y - dpR * 0.55f; r = dpR * 0.5f }
+            Z_DOWN -> { cx = dpCenter.x; cy = dpCenter.y + dpR * 0.55f; r = dpR * 0.5f }
+            Z_LEFT -> { cx = dpCenter.x - dpR * 0.55f; cy = dpCenter.y; r = dpR * 0.5f }
+            Z_RIGHT -> { cx = dpCenter.x + dpR * 0.55f; cy = dpCenter.y; r = dpR * 0.5f }
+            else -> return
+        }
+        if (r <= 0f) return
+        val d = resources.displayMetrics.density
+        val n = 6
+        val x0 = FloatArray(n); val y0 = FloatArray(n)
+        val x1 = FloatArray(n); val y1 = FloatArray(n)
+        val size = floatArrayOf(7f, 4.5f, 2f, 5f, 4.5f, 2f).map { it * d }.toFloatArray()
+        // 六颗星绕按键一圈：起点贴边缘、终点飞出 1.7~2.3 倍半径（90° = 正下方）
+        for (i in 0 until n) {
+            val baseDeg = 55f + i * 60f
+            val a = Math.toRadians((baseDeg + (i % 2) * 14f - 7f).toDouble())
+            val rr0 = r * (0.82f + 0.14f * (i % 3) / 2f)
+            val rr1 = r * (1.75f + 0.28f * (i % 3))
+            val cos = Math.cos(a).toFloat(); val sin = Math.sin(a).toFloat()
+            x0[i] = cx + cos * rr0; y0[i] = cy + sin * rr0
+            x1[i] = cx + cos * rr1; y1[i] = cy + sin * rr1
+        }
+        bursts.add(StarBurst(SystemClock.uptimeMillis(), x0, y0, x1, y1, size))
+        ensurePressTick()
+    }
+
+    /** 画活跃的星星（CSS z-index:2 → 按键之上）；生命 800ms，后 30% 淡出 */
+    private fun drawStarBursts(c: Canvas) {
+        if (bursts.isEmpty()) return
+        val now = SystemClock.uptimeMillis()
+        val it = bursts.iterator()
+        while (it.hasNext()) {
+            val b = it.next()
+            val p = (now - b.start) / burstLifeMs
+            if (p >= 1f) { it.remove(); continue }
+            val e = burstEase.getInterpolation(p)
+            val alpha = if (p < 0.7f) 1f else 1f - (p - 0.7f) / 0.3f
+            for (i in 0 until 6) {
+                val sx = b.x0[i] + (b.x1[i] - b.x0[i]) * e
+                val sy = b.y0[i] + (b.y1[i] - b.y0[i]) * e
+                val r = b.size[i] * (1f - 0.2f * e)
+                sparkle(c, sx, sy, r * 1.7f, alpha * 0.16f)
+                sparkle(c, sx, sy, r * 1.28f, alpha * 0.34f)
+                sparkle(c, sx, sy, r, alpha)
+            }
+        }
+    }
+
+    /** 四角星光（凹边菱形星，对应 CSS 的 SVG 四角星） */
+    private fun sparkle(c: Canvas, x: Float, y: Float, r: Float, alpha: Float) {
+        if (alpha <= 0.01f) return
+        val q = r * 0.22f
+        burstPath.reset()
+        burstPath.moveTo(x, y - r)
+        burstPath.quadTo(x + q, y - q, x + r, y)
+        burstPath.quadTo(x + q, y + q, x, y + r)
+        burstPath.quadTo(x - q, y + q, x - r, y)
+        burstPath.quadTo(x - q, y - q, x, y - r)
+        burstPath.close()
+        pStar.alpha = (255 * alpha).toInt().coerceIn(0, 255)
+        c.drawPath(burstPath, pStar)
     }
 
     // ---------- 触感反馈 ----------
@@ -1104,6 +1206,8 @@ class GamepadView @JvmOverloads constructor(
         if (shown("BACK")) drawPill(canvas, rectBack, "BACK", (state.buttons and Btn.BACK) != 0, "BACK")
         if (shown("GUIDE")) drawGuideButton(canvas)
         if (shown("MENU")) drawMenuButton(canvas)
+
+        drawStarBursts(canvas)
 
         if (editMode) drawEditOverlay(canvas)
     }
@@ -1775,6 +1879,9 @@ class GamepadView @JvmOverloads constructor(
         if (heldByOther(zone)) return
         pointers.put(id, zone)
         zoneDownAt.put(zone, SystemClock.uptimeMillis())
+
+        // 星星飞散：除左右摇杆外的所有按键，按下即散出一簇星（Uiverse 风格）
+        if (zone != Z_LSTICK && zone != Z_RSTICK) spawnStarBurst(zone)
 
         // 摇杆轻点（L3/R3）：记住落点，抬起时位移足够小才判定为"按下摇杆"
         when (zone) {

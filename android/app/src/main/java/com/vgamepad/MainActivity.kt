@@ -360,6 +360,7 @@ class MainActivity : AppCompatActivity() {
         gamepadView.stickStyle = prefs.getInt("stick_style", 0)
         gamepadView.bgEffect = if (prefs.contains("bg_effect")) prefs.getInt("bg_effect", 0)
         else if (prefs.getBoolean("star_field", true)) 1 else 0   // 旧偏好迁移
+        gamepadView.starBurstEnabled = prefs.getBoolean("star_burst", true)
         gamepadView.loadLayout(prefs.getString("layout_v1", null))
         gamepadView.loadHidden(prefs.getString("hidden_keys", null))
         gamepadView.hapticsEnabled = hapticsOn
@@ -838,6 +839,13 @@ class MainActivity : AppCompatActivity() {
             bgSwitches.add(sw)
             container.addView(sw)
         }
+
+        container.addView(
+            toggle("按键星星飞散动效", gamepadView.starBurstEnabled) { on ->
+                gamepadView.starBurstEnabled = on
+                prefs.edit().putBoolean("star_burst", on).apply()
+            }
+        )
 
         container.addView(label("右摇杆控制"))
         val gyroSw = toggle("陀螺仪瞄准（转手机 = 转视角）", wantGyro) {
