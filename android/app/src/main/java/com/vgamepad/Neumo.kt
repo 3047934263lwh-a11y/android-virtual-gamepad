@@ -293,7 +293,12 @@ class Neumo(private val density: Float) {
         canvas.save()
         clipRect.set(rect)
         clipRect.offset(0f, sink)
-        canvas.clipRect(clipRect)
+        // 必须按「圆角路径」裁剪：用 clipRect 会把矩形四角也涂上内阴影，
+        // 胶囊按钮/竖向轨道按下时就会露出一圈直角的"方块"。
+        clipPath.reset()
+        clipPath.addRoundRect(clipRect, radius.coerceAtLeast(0f), radius.coerceAtLeast(0f),
+            Path.Direction.CW)
+        canvas.clipPath(clipPath)
 
         val h = clipRect.height()
         // 顶缘暗影
