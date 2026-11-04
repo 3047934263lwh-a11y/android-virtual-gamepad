@@ -489,26 +489,29 @@ class GamepadView @JvmOverloads constructor(
         if (!starBurstEnabled) return
         val cx: Float
         val cy: Float
-        val r: Float
+        // 按键外形：圆键 rx=ry=半径；胶囊键（LB/RB/BACK/LT/RT）用椭圆（宽/2, 高/2），
+        // 星星沿真实轮廓分布——否则宽扁的肩键会聚成一团落在字母附近
+        val rx: Float
+        val ry: Float
         when (zone) {
-            Z_A -> { cx = cA.x; cy = cA.y; r = rA }
-            Z_B -> { cx = cB.x; cy = cB.y; r = rB }
-            Z_X -> { cx = cX.x; cy = cX.y; r = rX }
-            Z_Y -> { cx = cY.x; cy = cY.y; r = rY }
-            Z_GUIDE -> { cx = cGuide.x; cy = cGuide.y; r = rGuide }
-            Z_MENU -> { cx = cMenu.x; cy = cMenu.y; r = rMenu }
-            Z_LB -> { cx = rectLB.centerX(); cy = rectLB.centerY(); r = min(rectLB.width(), rectLB.height()) * 0.5f }
-            Z_RB -> { cx = rectRB.centerX(); cy = rectRB.centerY(); r = min(rectRB.width(), rectRB.height()) * 0.5f }
-            Z_BACK -> { cx = rectBack.centerX(); cy = rectBack.centerY(); r = min(rectBack.width(), rectBack.height()) * 0.5f }
-            Z_LT -> { cx = rectLT.centerX(); cy = rectLT.centerY(); r = rectLT.height() * 0.5f }
-            Z_RT -> { cx = rectRT.centerX(); cy = rectRT.centerY(); r = rectRT.height() * 0.5f }
-            Z_UP -> { cx = dpCenter.x; cy = dpCenter.y - dpR * 0.55f; r = dpR * 0.5f }
-            Z_DOWN -> { cx = dpCenter.x; cy = dpCenter.y + dpR * 0.55f; r = dpR * 0.5f }
-            Z_LEFT -> { cx = dpCenter.x - dpR * 0.55f; cy = dpCenter.y; r = dpR * 0.5f }
-            Z_RIGHT -> { cx = dpCenter.x + dpR * 0.55f; cy = dpCenter.y; r = dpR * 0.5f }
+            Z_A -> { cx = cA.x; cy = cA.y; rx = rA; ry = rA }
+            Z_B -> { cx = cB.x; cy = cB.y; rx = rB; ry = rB }
+            Z_X -> { cx = cX.x; cy = cX.y; rx = rX; ry = rX }
+            Z_Y -> { cx = cY.x; cy = cY.y; rx = rY; ry = rY }
+            Z_GUIDE -> { cx = cGuide.x; cy = cGuide.y; rx = rGuide; ry = rGuide }
+            Z_MENU -> { cx = cMenu.x; cy = cMenu.y; rx = rMenu; ry = rMenu }
+            Z_LB -> { cx = rectLB.centerX(); cy = rectLB.centerY(); rx = rectLB.width() * 0.5f; ry = rectLB.height() * 0.5f }
+            Z_RB -> { cx = rectRB.centerX(); cy = rectRB.centerY(); rx = rectRB.width() * 0.5f; ry = rectRB.height() * 0.5f }
+            Z_BACK -> { cx = rectBack.centerX(); cy = rectBack.centerY(); rx = rectBack.width() * 0.5f; ry = rectBack.height() * 0.5f }
+            Z_LT -> { cx = rectLT.centerX(); cy = rectLT.centerY(); rx = rectLT.width() * 0.5f; ry = rectLT.height() * 0.5f }
+            Z_RT -> { cx = rectRT.centerX(); cy = rectRT.centerY(); rx = rectRT.width() * 0.5f; ry = rectRT.height() * 0.5f }
+            Z_UP -> { cx = dpCenter.x; cy = dpCenter.y - dpR * 0.55f; rx = dpR * 0.5f; ry = dpR * 0.5f }
+            Z_DOWN -> { cx = dpCenter.x; cy = dpCenter.y + dpR * 0.55f; rx = dpR * 0.5f; ry = dpR * 0.5f }
+            Z_LEFT -> { cx = dpCenter.x - dpR * 0.55f; cy = dpCenter.y; rx = dpR * 0.5f; ry = dpR * 0.5f }
+            Z_RIGHT -> { cx = dpCenter.x + dpR * 0.55f; cy = dpCenter.y; rx = dpR * 0.5f; ry = dpR * 0.5f }
             else -> return
         }
-        if (r <= 0f) return
+        if (rx <= 0f || ry <= 0f) return
         val d = resources.displayMetrics.density
         val rng = java.util.Random()
         val n = 6
@@ -520,12 +523,12 @@ class GamepadView @JvmOverloads constructor(
         for (i in 0 until n) {
             val deg = baseDeg + i * 60f + rng.nextInt(48) - 24f
             val a = Math.toRadians(deg.toDouble())
-            val rr0 = r * (0.78f + rng.nextFloat() * 0.18f)   // 起点：贴按键边缘
-            val rr1 = r * (1.70f + rng.nextFloat() * 0.60f)   // 终点：1.7~2.3 倍半径外
             val cos = Math.cos(a).toFloat(); val sin = Math.sin(a).toFloat()
-            x0[i] = cx + cos * rr0; y0[i] = cy + sin * rr0
-            x1[i] = cx + cos * rr1; y1[i] = cy + sin * rr1
-            size[i] = (2f + rng.nextFloat() * 5f) * d          // 2~7dp 随机大小
+            val s0 = 0.86f + rng.nextFloat() * 0.14f            // 起点：贴外形轮廓
+            val s1 = 1.70f + rng.nextFloat() * 0.60f            // 终点：1.7~2.3 倍轮廓外
+            x0[i] = cx + cos * rx * s0; y0[i] = cy + sin * ry * s0
+            x1[i] = cx + cos * rx * s1; y1[i] = cy + sin * ry * s1
+            size[i] = (2f + rng.nextFloat() * 5f) * d           // 2~7dp 随机大小
         }
         bursts.add(StarBurst(SystemClock.uptimeMillis(), x0, y0, x1, y1, size))
         ensurePressTick()
