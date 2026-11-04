@@ -1401,18 +1401,18 @@ class MainActivity : AppCompatActivity() {
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     /**
-     * 收起宽度 = 栏左右内边距 + 「手柄」框完整盒宽（自身 padding + 文字 + 状态点 + marginEnd）。
-     * 用 Paint 测量，避免首帧 View.width 尚未测量导致算成 0、文字被压成两行或裁掉。
+     * 收起宽度 = 「手柄」胶囊真实宽度 + 栏左右各 12dp 内边距。
+     * 优先用布局后的 titleBox.width（零误差），胶囊在玻璃栏内严格左右对称（12dp/12dp）；
+     * 首帧尚未布局时退回 Paint 估算。栏内不再留任何多余空间——之前多出的余量
+     * 全部堆在胶囊右侧，看起来就是"胶囊偏左、右边一大块空白"。
      */
     private fun measureCollapsedWidth(): Int {
+        if (titleBox.width > 0) return titleBox.width + dp(24)
         val text = barTitle.text?.toString() ?: ""
         val spacing = barTitle.letterSpacing * barTitle.textSize * text.length
         val textW = barTitle.paint.measureText(text) + spacing
-        // 左右 padding 对称（12/12），[文字 + 5dp 间距 + 圆点] 整体几何居中（与布局同源）
         val titleBoxW = titleBox.paddingStart + titleBox.paddingEnd + textW + dp(DOT_DP) + dp(5)
-        val marginEnd = (titleBox.layoutParams as? ViewGroup.MarginLayoutParams)?.rightMargin ?: 0
-        // 必须容纳：栏 paddingStart + 标题盒宽 + 标题 marginEnd + 栏 paddingEnd，再留 16dp 余量
-        return dp(12) + titleBoxW.toInt() + marginEnd + dp(12) + dp(16)
+        return dp(12) + titleBoxW.toInt() + dp(12)
     }
 
     private fun applyBarWidth(w: Int) {
