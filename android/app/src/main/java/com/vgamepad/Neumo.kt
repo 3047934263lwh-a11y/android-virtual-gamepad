@@ -35,6 +35,7 @@ class Neumo(private val density: Float) {
     private val shaderCache = HashMap<Long, Shader>(64)
     private val shadowCache = HashMap<Long, Bitmap>(16)
     private val clipRect = RectF()
+    private val bezRect = RectF()
     private val clipPath = Path()
     private val shadowDst = RectF()
 
@@ -46,6 +47,18 @@ class Neumo(private val density: Float) {
         private const val TYPE_INNER_TOP = 5
         private const val TYPE_INNER_BOTTOM = 6
         private const val PRESS_STEPS = 12f
+
+        // ---- Uiverse「obsidian button」配色：黑曜石外圈 + 金属灰内面 ----
+        private const val TYPE_OBS_CIRCLE = 20
+        private const val TYPE_OBS_RECT = 21
+        private const val TYPE_OBS_WELL_C = 22
+        private const val TYPE_OBS_WELL_R = 23
+        private val OBS_BEZEL = 0xBF0B0B0B.toInt()
+        private val OBS_FACE_HI = 0xFFECECEC.toInt()
+        private val OBS_FACE_LO = 0xFFB6B6B6.toInt()
+        private val OBS_FACE_PRESS = 0xFFA8A8A8.toInt()
+        private val OBS_WELL_HI = 0xFF373B40.toInt()
+        private val OBS_WELL_LO = 0xFF1F2226.toInt()
         /**
          * 柔影位图烘焙上限（像素）。单键可放大到 500%，摇杆直径会到 ~2000px，
          * 若按 1:1 烘焙，单个位图就要 16MB 且每帧首次绘制会明显卡顿。
@@ -127,32 +140,35 @@ class Neumo(private val density: Float) {
     // ---------------- 凸起：圆形 ----------------
 
     /**
-     * 凸起圆钮。
-     * @param press 0=完全抬起，1=完全按下（下沉 + 内凹）
-     * @param alpha 入场/自定义透明度
-     * @param ring  激活时的强调色描边（可选）
+     * 凸起圆钮：Uiverse「obsidian button」风格——
+     * 黑曜石外圈包住 135° 金属灰内面，左上内阴影 / 右下内高光；
+     * 按下整体下沉、内阴影加深；[ring] 不再使用主题强调色，仅作为"激活"的单色暗环提示。
      */
     fun raisedCircle(
         canvas: Canvas, cx: Float, cy: Float, r: Float,
         press: Float, alpha: Float, ring: Int? = null,
     ) {
         if (r <= 0f || alpha <= 0.004f) return
-        val c = col()
         val p = press.coerceIn(0f, 1f)
         val a = alpha.coerceIn(0f, 1f)
         val sink = dip(1.6f) * p
         val cy2 = cy + sink
         val r2 = r * (1f - 0.014f * p)
         val ps = (p * PRESS_STEPS).toInt()
+        val bez = r2 * 0.13f
 
-        // 1) 右下投影：径向渐变环，扩散到 1.45r
-        val shadowA = a * (0.85f - 0.45f * p)
-        shadowRing(canvas, cx + r2 * 0.06f, cy2 + r2 * 0.11f, r2, c.shadowDark, 1.28f, 0.62f, shadowA)
-        // 2) 球面本体
-        //    注意：Shader 的坐标是「画布坐标」而不是「相对控件的坐标」。
-        //    控件散布在屏幕各处，若不先平移，渐变会全部被 CLAMP 成同一个端色，
-        //    表现就是所有按钮发平、摇杆变成一个灰饼。
-        fill.shader = sphereShader(r2, ps)
+        // 1) 底部外投影（CSS: 0.15em 0.3em rgba(5,5,5,.25)）
+        shadowRing(canvas, cx + r2 * 0.05f, cy2 + bez * 0.5f + r2 * 0.16f,
+            r2 + bez, 0xFF050505.toInt(), 1.20f, 0.50f, a * (0.26f - 0.10f * p))
+
+        // 2) 黑曜石外圈（CSS: background rgba(0,0,0,.75)）
+        fill.shader = null
+        fill.color = OBS_BEZEL
+        fill.alpha = (255 * a).toInt()
+        canvas.drawCircle(cx, cy2, r2 + bez, fill)
+
+        // 3) 金属灰内面（135° 高光渐变，按下向按压色收敛）
+        fill.shader = obsidianCircleShader(r2, ps)
         fill.alpha = (255 * a).toInt()
         canvas.save()
         canvas.translate(cx, cy2)
@@ -161,71 +177,101 @@ class Neumo(private val density: Float) {
         fill.shader = null
         fill.alpha = 255
 
-        // 3) 顶缘细高光（体内，不外扩）
-        stroke.color = c.withAlpha(c.shadowLight, a * (0.62f - 0.38f * p))
-        stroke.strokeWidth = dip(1.2f)
-        clipRect.set(cx - r2 + stroke.strokeWidth * 0.6f, cy2 - r2 + stroke.strokeWidth * 0.6f,
-            cx + r2 - stroke.strokeWidth * 0.6f, cy2 + r2 - stroke.strokeWidth * 0.6f)
-        canvas.drawArc(clipRect, 200f, 140f, false, stroke)
+        // 4) 内圈光影：左上压暗、右下提亮、细白收边
+        clipRect.set(cx - r2 + dip(0.8f), cy2 - r2 + dip(0.8f),
+            cx + r2 - dip(0.8f), cy2 + r2 - dip(0.8f))
+        stroke.strokeWidth = dip(1.4f)
+        stroke.color = Color.argb(((46 + 66 * p) * a).toInt().coerceIn(0, 255), 5, 5, 5)
+        canvas.drawArc(clipRect, 188f, 148f, false, stroke)
+        stroke.color = Color.argb(((64 - 30 * p) * a).toInt().coerceIn(0, 255), 255, 255, 255)
+        canvas.drawArc(clipRect, 14f, 148f, false, stroke)
+        stroke.strokeWidth = dip(0.9f)
+        stroke.color = Color.argb((56 * a).toInt().coerceIn(0, 255), 255, 255, 255)
+        canvas.drawCircle(cx, cy2, r2 - dip(0.6f), stroke)
 
-        // 4) 按压内凹：边缘向内收的暗影
-        if (p > 0.04f) {
-            canvas.save()
-            clipPath.reset()
-            clipPath.addCircle(cx, cy2, r2, Path.Direction.CW)
-            canvas.clipPath(clipPath)
-            fill.shader = innerShadowShader(r2, ps)
-            fill.alpha = (255 * a * p).toInt()
-            canvas.translate(cx - r2 * 0.06f, cy2 - r2 * 0.10f)
-            canvas.drawCircle(0f, 0f, r2 * 1.02f, fill)
-            canvas.restore()
-            fill.shader = null
-            fill.alpha = 255
-        }
-
-        // 5) 激活描边
-        if (ring != null) {
-            stroke.color = c.withAlpha(ring, a * 0.85f)
+        // 5) 激活/按下反馈：内圈暗环（单色风格下的点亮提示）
+        val ringA = maxOf(a * (if (ring != null) 0.50f else 0f), a * p * 0.62f)
+        if (ringA > 0.01f) {
             stroke.strokeWidth = dip(1.6f)
-            canvas.drawCircle(cx, cy2, r2 - dip(1.2f), stroke)
+            stroke.color = Color.argb((255 * ringA).toInt().coerceIn(0, 255), 5, 5, 5)
+            canvas.drawCircle(cx, cy2, r2 * 0.90f, stroke)
         }
+    }
+
+    /** 金属灰内面（135° 高光渐变），按下时向按压色收敛。 */
+    private fun obsidianCircleShader(r: Float, ps: Int): Shader {
+        val k = key(TYPE_OBS_CIRCLE, (r * 4).toInt().coerceAtLeast(1), ps, 0)
+        shaderCache[k]?.let { return it }
+        val t = ps / PRESS_STEPS
+        val hi = mix(OBS_FACE_HI, OBS_FACE_PRESS, t)
+        val lo = mix(OBS_FACE_LO, OBS_FACE_PRESS, t)
+        val dd = r * 1.42f
+        val sh = LinearGradient(-dd * 0.5f, -dd * 0.5f, dd * 0.5f, dd * 0.5f, hi, lo, Shader.TileMode.CLAMP)
+        if (shaderCache.size > 220) shaderCache.clear()
+        shaderCache[k] = sh
+        return sh
     }
 
     // ---------------- 凹槽：圆形（摇杆井） ----------------
 
+    /**
+     * 凹槽圆（摇杆井）：黑曜石外圈 + 深灰井底，顶缘内阴影交代深度。
+     */
     fun insetCircle(canvas: Canvas, cx: Float, cy: Float, r: Float, alpha: Float, depth: Float = 1f) {
         if (r <= 0f || alpha <= 0.004f) return
-        val c = col()
         val a = alpha.coerceIn(0f, 1f)
         val d = depth.coerceIn(0f, 1.5f)
+        val bez = r * 0.12f
 
-        // 槽底（比背景略深，形成"挖进去"的第一层）
         fill.shader = null
-        fill.color = darken(c.bg, 0.024f * d)
-        fill.alpha = (255 * a).toInt()
-        canvas.drawCircle(cx, cy, r, fill)
+        fill.color = OBS_BEZEL
+        fill.alpha = (255 * a * 0.92f).toInt()
+        canvas.drawCircle(cx, cy, r + bez * 0.55f, fill)
         fill.alpha = 255
 
-        // 内阴影：偏移到左上，边缘最重
+        fill.shader = obsidianWellShader(r * 2f, d)
+        fill.alpha = (255 * a).toInt()
+        canvas.save()
+        canvas.translate(cx - r, cy - r)
+        canvas.drawCircle(r, r, r, fill)
+        canvas.restore()
+        fill.shader = null
+        fill.alpha = 255
+
+        // 顶缘内阴影：光从左上来，凹槽上沿挡光
         canvas.save()
         clipPath.reset()
         clipPath.addCircle(cx, cy, r, Path.Direction.CW)
         canvas.clipPath(clipPath)
         fill.shader = innerShadowShader(r, (PRESS_STEPS * 0.6f).toInt())
-        fill.alpha = (255 * a * 0.70f * d).toInt()
+        fill.alpha = (255 * a * 0.75f * d).toInt()
         canvas.translate(cx - r * 0.05f, cy - r * 0.09f)
         canvas.drawCircle(0f, 0f, r * 1.02f, fill)
         canvas.restore()
         fill.shader = null
         fill.alpha = 255
 
-        // 底部反光：极细的亮边，交代槽口厚度
-        stroke.color = c.withAlpha(c.shadowLight, a * 0.55f)
-        stroke.strokeWidth = dip(1.1f)
+        // 底缘细亮边：交代槽口厚度
+        stroke.color = Color.argb((40 * a).toInt().coerceIn(0, 255), 255, 255, 255)
+        stroke.strokeWidth = dip(1f)
         clipRect.set(cx - r + stroke.strokeWidth, cy - r + stroke.strokeWidth,
             cx + r - stroke.strokeWidth, cy + r - stroke.strokeWidth)
-        canvas.drawArc(clipRect, 20f, 140f, false, stroke)
+        canvas.drawArc(clipRect, 30f, 120f, false, stroke)
     }
+
+    /** 深灰井底渐变（局部坐标，size = 井直径）。 */
+    private fun obsidianWellShader(size: Float, depth: Float): Shader {
+        val k = key(TYPE_OBS_WELL_C, size.toInt().coerceAtLeast(1), (depth * 100).toInt(), 0)
+        shaderCache[k]?.let { return it }
+        val sh = LinearGradient(
+            0f, 0f, 0f, size,
+            mix(OBS_WELL_HI, OBS_WELL_LO, 0.22f * depth), OBS_WELL_LO, Shader.TileMode.CLAMP
+        )
+        if (shaderCache.size > 220) shaderCache.clear()
+        shaderCache[k] = sh
+        return sh
+    }
+
 
     // ---------------- 凸起：圆角矩形 ----------------
 
@@ -239,6 +285,7 @@ class Neumo(private val density: Float) {
         val a = alpha.coerceIn(0f, 1f)
         val sink = dip(1.4f) * p
         val r2 = radius * (1f - 0.10f * p)
+        @Suppress("UNUSED_PARAMETER") val tintUnused = tint
 
         // 柔和投影（预烘焙 Bitmap）
         val blur = dip(6f)
@@ -265,10 +312,17 @@ class Neumo(private val density: Float) {
         }
         imgPaint.alpha = 255
 
-        // 本体：纵向渐变（上亮下暗）
+        // 本体：黑曜石外圈 + 金属灰内面（135° 高光带）
         clipRect.set(rect)
         clipRect.offset(0f, sink)
-        fill.shader = rectBodyShader(rect.width(), rect.height(), (p * PRESS_STEPS).toInt(), tint)
+        val bez = minOf(dip(3f), rect.height() * 0.14f)
+        fill.shader = null
+        fill.color = OBS_BEZEL
+        fill.alpha = (255 * a).toInt()
+        bezRect.set(clipRect.left - bez, clipRect.top - bez, clipRect.right + bez, clipRect.bottom + bez)
+        canvas.drawRoundRect(bezRect, r2 + bez, r2 + bez, fill)
+
+        fill.shader = obsidianRectFaceShader(clipRect.width(), clipRect.height(), (p * PRESS_STEPS).toInt())
         fill.alpha = (255 * a).toInt()
         canvas.save()
         canvas.translate(clipRect.left, clipRect.top)
@@ -277,32 +331,73 @@ class Neumo(private val density: Float) {
         fill.shader = null
         fill.alpha = 255
 
-        // 顶缘高光
-        stroke.color = c.withAlpha(c.shadowLight, a * (0.75f - 0.4f * p))
-        stroke.strokeWidth = dip(1.1f)
-        clipRect.set(rect)
-        clipRect.offset(0f, sink)
-        clipRect.inset(stroke.strokeWidth * 0.5f, stroke.strokeWidth * 0.5f)
-        canvas.drawArc(clipRect, 195f, 150f, false, stroke)
+        // 内阴影（左上暗 / 底部亮），按下时加深
+        drawInnerShadowRect(canvas, clipRect, r2, 0f, a * (0.55f + 0.45f * p))
 
-        // 按压内凹
-        if (p > 0.04f) {
-            drawInnerShadowRect(canvas, rect, r2, sink, a * p)
-        }
+        // 细白收边
+        stroke.color = Color.argb((42 * a).toInt().coerceIn(0, 255), 255, 255, 255)
+        stroke.strokeWidth = dip(0.9f)
+        clipRect.inset(stroke.strokeWidth * 0.5f, stroke.strokeWidth * 0.5f)
+        canvas.drawRoundRect(clipRect, (r2 - dip(0.4f)).coerceAtLeast(0f), (r2 - dip(0.4f)).coerceAtLeast(0f), stroke)
+    }
+
+    /** 金属灰内面（矩形，135° 高光渐变）。 */
+    private fun obsidianRectFaceShader(w: Float, h: Float, ps: Int): Shader {
+        val k = key(TYPE_OBS_RECT, (w * 2).toInt().coerceAtLeast(1), (h * 2).toInt().coerceAtLeast(1), ps)
+        shaderCache[k]?.let { return it }
+        val t = ps / PRESS_STEPS
+        val hi = mix(OBS_FACE_HI, OBS_FACE_PRESS, t)
+        val lo = mix(OBS_FACE_LO, OBS_FACE_PRESS, t)
+        val sh = LinearGradient(0f, 0f, w, h, hi, lo, Shader.TileMode.CLAMP)
+        if (shaderCache.size > 220) shaderCache.clear()
+        shaderCache[k] = sh
+        return sh
     }
 
     // ---------------- 凹槽：圆角矩形（扳机行程槽等） ----------------
 
+    /**
+     * 凹槽圆角矩形（扳机行程槽）：黑曜石外圈 + 深灰井底。
+     */
     fun insetRect(canvas: Canvas, rect: RectF, radius: Float, alpha: Float) {
         if (rect.width() <= 0f || rect.height() <= 0f || alpha <= 0.004f) return
-        val c = col()
         val a = alpha.coerceIn(0f, 1f)
+        val bez = minOf(dip(2.5f), rect.width() * 0.16f)
+
         fill.shader = null
-        fill.color = darken(c.bg, 0.028f)
-        fill.alpha = (255 * a).toInt()
-        canvas.drawRoundRect(rect, radius, radius, fill)
+        fill.color = OBS_BEZEL
+        fill.alpha = (255 * a * 0.92f).toInt()
+        bezRect.set(rect.left - bez, rect.top - bez, rect.right + bez, rect.bottom + bez)
+        canvas.drawRoundRect(bezRect, radius + bez, radius + bez, fill)
         fill.alpha = 255
-        drawInnerShadowRect(canvas, rect, radius, 0f, a * 0.9f)
+
+        fill.shader = obsidianWellRectShader(rect.width(), rect.height())
+        fill.alpha = (255 * a).toInt()
+        canvas.save()
+        canvas.translate(rect.left, rect.top)
+        canvas.drawRoundRect(0f, 0f, rect.width(), rect.height(), radius, radius, fill)
+        canvas.restore()
+        fill.shader = null
+        fill.alpha = 255
+
+        drawInnerShadowRect(canvas, rect, radius, 0f, a * 0.95f)
+
+        stroke.color = Color.argb((30 * a).toInt().coerceIn(0, 255), 255, 255, 255)
+        stroke.strokeWidth = dip(0.8f)
+        bezRect.set(rect)
+        bezRect.inset(stroke.strokeWidth * 0.6f, stroke.strokeWidth * 0.6f)
+        canvas.drawRoundRect(bezRect, (radius - dip(0.3f)).coerceAtLeast(0f),
+            (radius - dip(0.3f)).coerceAtLeast(0f), stroke)
+    }
+
+    /** 深灰井底渐变（矩形，局部坐标）。 */
+    private fun obsidianWellRectShader(w: Float, h: Float): Shader {
+        val k = key(TYPE_OBS_WELL_R, (w * 2).toInt().coerceAtLeast(1), (h * 2).toInt().coerceAtLeast(1), 0)
+        shaderCache[k]?.let { return it }
+        val sh = LinearGradient(0f, 0f, 0f, h, OBS_WELL_HI, OBS_WELL_LO, Shader.TileMode.CLAMP)
+        if (shaderCache.size > 220) shaderCache.clear()
+        shaderCache[k] = sh
+        return sh
     }
 
     /** 按下时的内阴影：顶缘暗、底缘亮，模拟"陷进面板"。 */

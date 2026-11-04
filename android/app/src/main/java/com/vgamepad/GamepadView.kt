@@ -102,6 +102,9 @@ class GamepadView @JvmOverloads constructor(
 
     private companion object {
         /** 单键缩放区间：50%–500%。上限由编辑模式滑杆 editSeek.max 对应，二者必须一致。 */
+        /** obsidian 风格：按键文字统一深灰渐变基调 */
+        const val OBS_TEXT = 0xFF2C2C2C.toInt()
+        const val OBS_TEXT_ACTIVE = 0xFF141414.toInt()
         const val MIN_CTRL_SCALE = 0.5f
         const val MAX_CTRL_SCALE = 5.0f
         const val Z_NONE = -1
@@ -827,7 +830,7 @@ class GamepadView @JvmOverloads constructor(
         neumo.insetCircle(c, center.x, cy, radius, ca01, 1f)
 
         // 2) 井底同心细环（MD3 层次提示活动范围）
-        pStroke.color = fade(col.outline, ca01 * 0.34f)
+        pStroke.color = fade(0x38FFFFFF.toInt(), ca01 * 0.55f)
         pStroke.strokeWidth = dp(1f)
         c.drawCircle(center.x, cy, radius * 0.78f, pStroke)
 
@@ -835,10 +838,10 @@ class GamepadView @JvmOverloads constructor(
         val kx = center.x + knob.x
         val ky = cy + knob.y
         neumo.raisedCircle(c, kx, ky, knobRadius, 0f, ca01,
-            ring = if (lit) col.accent else null)
+            ring = if (lit) 0xFF050505.toInt() else null)
 
-        // 4) 帽顶指向点：激活时用强调色，安静时用次级色
-        pFill.color = fade(col.accent, ca01 * if (lit) 0.90f else 0.30f)
+        // 4) 帽顶指向点：obsidian 单色，激活时加深
+        pFill.color = fade(OBS_TEXT, ca01 * if (lit) 0.95f else 0.38f)
         c.drawCircle(kx, ky, knobRadius * 0.28f, pFill)
     }
 
@@ -877,7 +880,7 @@ class GamepadView @JvmOverloads constructor(
         val pp = pressP(zone)
         neumo.raisedRect(c, tmp, radius, pp, alpha, tint = 0.055f)
         if (active) {
-            pFill.color = fade(col.accent, alpha * 0.22f)
+            pFill.color = fade(0xFF050505.toInt(), alpha * 0.14f)
             c.drawRoundRect(tmp, radius, radius, pFill)
         }
     }
@@ -902,12 +905,9 @@ class GamepadView @JvmOverloads constructor(
         val tint = faceColor(label)
 
         neumo.raisedCircle(c, p.x, cy, radius, pp, ca01,
-            ring = if (active) tint else null)
+            ring = if (active) 0xFF050505.toInt() else null)
 
-        pText.color = fade(
-            if (active) lerp(tint, 0xFFFFFFFF.toInt(), 0.30f) else tint,
-            ca01
-        )
+        pText.color = fade(if (active) OBS_TEXT_ACTIVE else OBS_TEXT, ca01)
         pText.textSize = radius * 0.92f
         pText.isFakeBoldText = true
         val fm = pText.fontMetrics
@@ -929,14 +929,11 @@ class GamepadView @JvmOverloads constructor(
         tmp.offset(0f, ty)
         neumo.raisedRect(c, tmp, rad, pp, ca01)
         if (active) {
-            pFill.color = fade(col.accent, ca01 * 0.20f)
+            pFill.color = fade(0xFF050505.toInt(), ca01 * 0.12f)
             c.drawRoundRect(tmp, rad, rad, pFill)
         }
 
-        pText.color = fade(
-            if (active || pp > 0.5f) col.accentInk else col.onSurface,
-            ca01
-        )
+        pText.color = fade(if (active || pp > 0.5f) OBS_TEXT_ACTIVE else OBS_TEXT, ca01)
         pText.textSize = min(r.height() * 0.40f, r.width() * 0.42f)
         pText.isFakeBoldText = true
         pText.letterSpacing = 0.04f
@@ -959,14 +956,14 @@ class GamepadView @JvmOverloads constructor(
         val cy = cGuide.y + ty
 
         neumo.raisedCircle(c, cGuide.x, cy, rGuide, pp, ca01,
-            ring = if (active) col.accent else null)
+            ring = if (active) 0xFF050505.toInt() else null)
 
-        // 内圈：强调键位身份
-        pStroke.color = fade(if (active) col.accentInk else col.outline, ca01 * 0.95f)
+        // 内圈：obsidian 单色键位圈
+        pStroke.color = fade(0x40000000, ca01 * (if (active) 1.4f else 0.95f))
         pStroke.strokeWidth = dp(1.2f)
         c.drawCircle(cGuide.x, cy, rGuide * 0.58f, pStroke)
 
-        pText.color = fade(if (active) col.accentInk else col.onSurface, ca01)
+        pText.color = fade(if (active) OBS_TEXT_ACTIVE else OBS_TEXT, ca01)
         pText.textSize = rGuide * 0.66f
         pText.isFakeBoldText = true
         val fm = pText.fontMetrics
@@ -987,12 +984,12 @@ class GamepadView @JvmOverloads constructor(
         val cy = cMenu.y + ty
 
         neumo.raisedCircle(c, cMenu.x, cy, rMenu, pp, ca01,
-            ring = if (active) col.accent else null)
+            ring = if (active) 0xFF050505.toInt() else null)
 
         val lw = rMenu * 0.54f
         val lh = maxOf(dp(2f), rMenu * 0.085f)
         val gap = rMenu * 0.23f
-        pFill.color = fade(if (active) col.accentInk else col.onSurface, ca01)
+        pFill.color = fade(if (active) OBS_TEXT_ACTIVE else OBS_TEXT, ca01)
         for (k in -1..1) {
             val ly = cy + k * gap
             tmp.set(cMenu.x - lw / 2f, ly - lh / 2f, cMenu.x + lw / 2f, ly + lh / 2f)
@@ -1020,7 +1017,7 @@ class GamepadView @JvmOverloads constructor(
             val inner = dp(2.5f)
             val hh = (rr.height() - inner * 2f) * frac
             tmp.set(rr.left + inner, rr.bottom - inner - hh, rr.right - inner, rr.bottom - inner)
-            pFill.shader = neumo.triggerFill(tmp.height(), frac, col.accent, ca01)
+            pFill.shader = neumo.triggerFill(tmp.height(), frac, 0xFFD2D2D2.toInt(), ca01)
             // Shader 用局部坐标，先平移到填充区左上角再画
             c.save()
             c.translate(tmp.left, tmp.top)
@@ -1040,7 +1037,7 @@ class GamepadView @JvmOverloads constructor(
 
         c.save()
         c.rotate(-90f, rr.centerX(), rr.centerY())
-        pText.color = fade(if (frac > 0.4f) col.accentInk else col.onSurfaceVar, ca01)
+        pText.color = fade(OBS_TEXT, ca01)
         pText.textSize = rr.width() * 0.44f
         pText.isFakeBoldText = true
         val fm = pText.fontMetrics
