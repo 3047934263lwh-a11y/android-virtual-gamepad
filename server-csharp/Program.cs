@@ -23,6 +23,9 @@ internal static class Program
 
     private static volatile bool _running = true;
 
+    /// <summary>最近一次收到报文的手机地址，供震动回传使用（驱动回调线程读取）。</summary>
+    private static volatile IPEndPoint? _lastClient;
+
     private static int Main(string[] args)
     {
         TrySetUtf8();
@@ -115,6 +118,31 @@ internal static class Program
 
         socket.ReceiveTimeout = 250;
 
+        // ---- 反向通道：游戏震动 → 手机 ----
+        // 8 字节定长，与 Android 端 UdpSender.rumbleLoop / Python 端完全一致：
+        //   "VGPR" + version(1) + large(0-255) + small(0-255) + reserved(0)
+        pad.FeedbackReceived += (_, e) =>
+        {
+            var target = _lastClient;
+            if (target is null)
+            {
+                return;
+            }
+
+            try
+            {
+                var payload = new byte[8]
+                {
+                    0x56, 0x47, 0x50, 0x52, 1, e.LargeMotor, e.SmallMotor, 0
+                };
+                socket.SendTo(payload, target);
+            }
+            catch
+            {
+                // 手机已离线或网络切换：忽略本次震动，不影响输入主链路
+            }
+        };
+
         var buffer = new byte[128];
         EndPoint remote = new IPEndPoint(IPAddress.Any, 0);
 
@@ -152,11 +180,23 @@ internal static class Program
 
                 if (remote is IPEndPoint ep)
                 {
+                    _lastClient = ep;   // 供震动回传定位手机
                     string who = ep.ToString();
                     if (who != activeClient)
                     {
                         activeClient = who;
                         Console.WriteLine($"[连接] 手机端 {who}");
+                    }
+
+                    // 告知手机端玩家编号；C# 端是单人实现，固定 1P
+                    try
+                    {
+                        socket.SendTo(
+                            new byte[] { 0x56, 0x47, 0x50, 0x50, 1, 1, 0, 0 }, ep);
+                    }
+                    catch
+                    {
+                        // 忽略：手机可能刚好切网
                     }
                 }
 
@@ -213,6 +253,21 @@ internal static class Program
                     long total = packets + lost;
                     double rate = total > 0 ? lost * 100.0 / total : 0;
                     Console.Write($"\r[状态] {packets,4} pps    丢包率 {rate,5:F1}%    ");
+                }
+
+                // 周期性重发玩家编号：手机端接收线程晚于首包启动时也能拿到 1P
+                var target = _lastClient;
+                if (target is not null)
+                {
+                    try
+                    {
+                        socket.SendTo(
+                            new byte[] { 0x56, 0x47, 0x50, 0x50, 1, 1, 0, 0 }, target);
+                    }
+                    catch
+                    {
+                        // 忽略
+                    }
                 }
 
                 packets = 0;

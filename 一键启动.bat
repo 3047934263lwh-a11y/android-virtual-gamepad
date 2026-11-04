@@ -60,7 +60,7 @@ for /f "tokens=4" %%s in ('sc query ViGEmBus ^| findstr STATE') do set VST=%%s
 echo [OK] ViGEmBus driver installed (state: !VST!)
 
 REM ---- 3. Kill leftover receiver instances (prevents port conflicts) ----
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | Where-Object { $_.CommandLine -like '*server.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force; Write-Host ('[OK] Killed stale instance PID=' + $_.ProcessId) }" 2>nul
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | Where-Object { $_.CommandLine -like '*server-python*server.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force; Write-Host ('[OK] Killed stale instance PID=' + $_.ProcessId) }" 2>nul
 timeout /t 1 /nobreak >nul
 
 netstat -ano 2>nul | findstr "26760" >nul 2>nul

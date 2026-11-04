@@ -1,0 +1,8 @@
+# PC 接收端（Windows）依赖
+# Python 3.8+（实测 3.13）
+#
+#   pip install -r requirements.txt
+#
+# 另需安装 ViGEmBus 驱动（非 pip 依赖）：
+#   https://github.com/nefarius/ViGEmBus/releases
+vgamepad>=0.0.8

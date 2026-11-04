@@ -1,0 +1,146 @@
+{
+  "protocol": "VGP1",
+  "version": 1,
+  "packet_size": 20,
+  "byte_order": "little-endian",
+  "layout": [
+    {
+      "offset": 0,
+      "size": 4,
+      "field": "magic",
+      "value": "VGP1"
+    },
+    {
+      "offset": 4,
+      "size": 1,
+      "field": "version",
+      "value": 1
+    },
+    {
+      "offset": 5,
+      "size": 2,
+      "field": "buttons",
+      "type": "uint16"
+    },
+    {
+      "offset": 7,
+      "size": 1,
+      "field": "seq",
+      "type": "uint8"
+    },
+    {
+      "offset": 8,
+      "size": 2,
+      "field": "lx",
+      "type": "int16"
+    },
+    {
+      "offset": 10,
+      "size": 2,
+      "field": "ly",
+      "type": "int16"
+    },
+    {
+      "offset": 12,
+      "size": 2,
+      "field": "rx",
+      "type": "int16"
+    },
+    {
+      "offset": 14,
+      "size": 2,
+      "field": "ry",
+      "type": "int16"
+    },
+    {
+      "offset": 16,
+      "size": 1,
+      "field": "lt",
+      "type": "uint8"
+    },
+    {
+      "offset": 17,
+      "size": 1,
+      "field": "rt",
+      "type": "uint8"
+    },
+    {
+      "offset": 18,
+      "size": 2,
+      "field": "reserved",
+      "value": 0
+    }
+  ],
+  "cases": [
+    {
+      "name": "neutral",
+      "fields": {
+        "buttons": 0,
+        "lx": 0,
+        "ly": 0,
+        "rx": 0,
+        "ry": 0,
+        "lt": 0,
+        "rt": 0,
+        "seq": 0
+      },
+      "hex": "5647503101000000000000000000000000000000"
+    },
+    {
+      "name": "a_full_left_up_lt200",
+      "fields": {
+        "buttons": 1,
+        "lx": -32768,
+        "ly": 32767,
+        "rx": 0,
+        "ry": 0,
+        "lt": 200,
+        "rt": 0,
+        "seq": 7
+      },
+      "hex": "56475031010100070080ff7f00000000c8000000"
+    },
+    {
+      "name": "dpad_up_b_rt255",
+      "fields": {
+        "buttons": 1026,
+        "lx": 0,
+        "ly": 0,
+        "rx": 12000,
+        "ry": -12000,
+        "lt": 0,
+        "rt": 255,
+        "seq": 40
+      },
+      "hex": "564750310102042800000000e02e20d100ff0000"
+    },
+    {
+      "name": "guide_l3_r3_extremes",
+      "fields": {
+        "buttons": 17152,
+        "lx": 100,
+        "ly": -100,
+        "rx": -32768,
+        "ry": 32767,
+        "lt": 1,
+        "rt": 254,
+        "seq": 255
+      },
+      "hex": "56475031010043ff64009cff0080ff7f01fe0000"
+    },
+    {
+      "name": "all_buttons",
+      "fields": {
+        "buttons": 32767,
+        "lx": 32767,
+        "ly": -32768,
+        "rx": 32767,
+        "ry": -32768,
+        "lt": 255,
+        "rt": 255,
+        "seq": 128
+      },
+      "hex": "5647503101ff7f80ff7f0080ff7f0080ffff0000"
+    }
+  ]
+}

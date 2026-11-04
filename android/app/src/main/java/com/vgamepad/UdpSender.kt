@@ -127,7 +127,8 @@ class UdpSender(private val state: GamepadState) {
         while (running) {
             try {
                 sock.receive(packet)
-                if (packet.length >= 8 &&
+                // 回传报文是 8 字节定长；严格相等可挡掉被截断或构造的超长包
+                if (packet.length == 8 &&
                     buf[0] == 0x56.toByte() && buf[1] == 0x47.toByte() &&
                     buf[2] == 0x50.toByte()
                 ) {

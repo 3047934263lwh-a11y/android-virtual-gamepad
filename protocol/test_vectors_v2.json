@@ -1,0 +1,102 @@
+{
+  "protocol": "VGP2",
+  "version": 2,
+  "packet_size": 48,
+  "byte_order": "little-endian",
+  "mac": "HMAC-SHA256(key=sessionKey, msg=packet[0:40])[0:8]",
+  "test_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "device_id": 1234605616436508552,
+  "session_id": 2712847316,
+  "cases": [
+    {
+      "name": "input_neutral",
+      "type": 1,
+      "flags": 0,
+      "session_id": 2712847316,
+      "seq": 1,
+      "device_id": 1234605616436508552,
+      "fields": {
+        "buttons": 0,
+        "lx": 0,
+        "ly": 0,
+        "rx": 0,
+        "ry": 0,
+        "lt": 0,
+        "rt": 0
+      },
+      "hex": "5647503202010000d4c3b2a101000000887766554433221100000000000000000000000000000000c515e6836485d41b"
+    },
+    {
+      "name": "input_a_left_up",
+      "type": 1,
+      "flags": 0,
+      "session_id": 2712847316,
+      "seq": 2,
+      "device_id": 1234605616436508552,
+      "fields": {
+        "buttons": 1,
+        "lx": -32768,
+        "ly": 32767,
+        "rx": 0,
+        "ry": 0,
+        "lt": 200,
+        "rt": 0
+      },
+      "hex": "5647503202010000d4c3b2a102000000887766554433221101000080ff7f00000000c80000000000c30d6acb6cdb6f65"
+    },
+    {
+      "name": "input_dpad_b_rt255",
+      "type": 1,
+      "flags": 0,
+      "session_id": 2712847316,
+      "seq": 3,
+      "device_id": 1234605616436508552,
+      "fields": {
+        "buttons": 1026,
+        "lx": 0,
+        "ly": 0,
+        "rx": 12000,
+        "ry": -12000,
+        "lt": 0,
+        "rt": 255
+      },
+      "hex": "5647503202010000d4c3b2a1030000008877665544332211020400000000e02e20d100ff00000000668e996f8e4b8b44"
+    },
+    {
+      "name": "input_guide_l3r3",
+      "type": 1,
+      "flags": 0,
+      "session_id": 2712847316,
+      "seq": 16777215,
+      "device_id": 1234605616436508552,
+      "fields": {
+        "buttons": 17152,
+        "lx": 100,
+        "ly": -100,
+        "rx": -32768,
+        "ry": 32767,
+        "lt": 1,
+        "rt": 254
+      },
+      "hex": "5647503202010000d4c3b2a1ffffff008877665544332211004364009cff0080ff7f01fe000000001c2cdbdf335dde4b"
+    },
+    {
+      "name": "hello",
+      "type": 4,
+      "flags": 1,
+      "session_id": 0,
+      "seq": 1,
+      "device_id": 1234605616436508552,
+      "fields": {
+        "buttons": 0,
+        "lx": 0,
+        "ly": 0,
+        "rx": 0,
+        "ry": 0,
+        "lt": 0,
+        "rt": 0
+      },
+      "hex": "564750320204010000000000010000008877665544332211000000000000000000000000000000008c7bfb9f8b7752a3"
+    }
+  ]
+}

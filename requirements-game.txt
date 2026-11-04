@@ -1,0 +1,7 @@
+# 测试游戏依赖（game/ 目录下的 4 个 pygame 程序）
+# Python 3.9+
+#
+#   pip install -r requirements-game.txt
+#
+# 游戏通过 XInput 读取手柄，因此仍需先启动 PC 接收端并安装 ViGEmBus。
+pygame>=2.5

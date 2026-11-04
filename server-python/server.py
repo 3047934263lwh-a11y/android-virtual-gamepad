@@ -19,6 +19,7 @@ import select
 import socket
 import struct
 import sys
+import threading
 import time
 
 try:
@@ -72,8 +73,12 @@ def describe(buttons, lx, ly, rx, ry, lt, rt):
 
 
 def parse(data: bytes):
-    """解析 20 字节报文，失败返回 None。"""
-    if len(data) < PACKET_SIZE:
+    """解析 20 字节报文，失败返回 None。
+
+    长度必须严格等于 PACKET_SIZE：UDP 是数据报语义，超长包只可能是
+    版本不匹配、被截断或恶意构造，一律丢弃而不是"取前 20 字节"。
+    """
+    if len(data) != PACKET_SIZE:
         return None
     if data[:4] != MAGIC or data[4] != VERSION:
         return None
@@ -123,30 +128,27 @@ class Player:
         self.last_shown = None
 
 
-def make_rumble_cb(sock, players, idx: int, debug: bool):
+def make_rumble_cb(sock, players, players_lock, idx: int, debug: bool):
     """为第 idx 号手柄生成震动回调：游戏对该手柄的震动 → UDP 回传到对应手机。"""
 
     def on_feedback(client, target, large_motor, small_motor, led_number, user_data):
-        # 驱动线程回调：通过 idx 找到该手柄归属的手机地址。
-        # 注意：本回调运行在驱动线程，而主循环可能同时向 players 插入新玩家，
-        # 直接迭代 dict 会触发 "dictionary changed size" —— 必须先拍快照。
-        for p in list(players.values()):
-            if p.idx == idx:
-                a = p.addr
-                if a is not None:
-                    try:
-                        sock.sendto(
-                            b"VGPR" + bytes(
-                                [1, int(large_motor) & 0xFF,
-                                 int(small_motor) & 0xFF, 0]),
-                            (a[0], a[1]),
-                        )
-                    except OSError:
-                        pass
-                if debug:
-                    print(f"\n[{idx + 1}P 震动] 大={large_motor} 小={small_motor}",
-                          flush=True)
-                return
+        # 驱动线程回调：主循环可能同时增删玩家，必须持锁拍快照；
+        # 锁内只取地址，UDP 发送放到锁外，避免持锁做 I/O。
+        with players_lock:
+            addr = next((p.addr for p in players.values() if p.idx == idx), None)
+        if addr is not None:
+            try:
+                sock.sendto(
+                    b"VGPR" + bytes(
+                        [1, int(large_motor) & 0xFF,
+                         int(small_motor) & 0xFF, 0]),
+                    (addr[0], addr[1]),
+                )
+            except OSError:
+                pass
+        if debug:
+            print(f"\n[{idx + 1}P 震动] 大={large_motor} 小={small_motor}",
+                  flush=True)
     return on_feedback
 
 
@@ -174,6 +176,8 @@ def main() -> int:
     print(f"[监听] UDP 0.0.0.0:{args.port}   等待手机端连接…\n")
 
     players: dict = {}          # 来源 IP -> Player
+    # 主循环与 ViGEm 回调线程共享 players，结构变更必须持锁
+    players_lock = threading.Lock()
     free_slots = list(range(MAX_PLAYERS))
     full_warn_at = 0.0
     last_report = time.monotonic()
@@ -228,11 +232,12 @@ def main() -> int:
                         continue
                     try:
                         pad.register_notification(
-                            make_rumble_cb(sock, players, idx, args.debug))
+                            make_rumble_cb(sock, players, players_lock, idx, args.debug))
                     except Exception as exc:  # noqa: BLE001
                         print(f"[震动] {idx + 1}P 力反馈回调注册失败: {exc}", flush=True)
                     p = Player(idx, pad, addr)
-                    players[ip] = p
+                    with players_lock:
+                        players[ip] = p
                     try:
                         # 告知手机端它的玩家编号（App 顶部会显示）
                         sock.sendto(b"VGPP" + bytes([1, idx + 1, 0, 0]), addr)
@@ -289,7 +294,8 @@ def main() -> int:
                         unplug()
                     except Exception:  # noqa: BLE001
                         pass
-                players.pop(ip, None)
+                with players_lock:
+                    players.pop(ip, None)
                 free_slots.append(p.idx)
                 free_slots.sort()
                 print(f"\n[{p.idx + 1}P] 离线超过 {int(SLOT_TTL_SEC)}s，"
@@ -319,9 +325,20 @@ def main() -> int:
                     p.lost = 0
                 last_report = now
     except KeyboardInterrupt:
-        print("\n[退出] 全部虚拟控制器已移除。")
+        print("\n[退出] 正在移除全部虚拟控制器…")
     finally:
+        # 退出时必须显式拔掉每个虚拟手柄，否则驱动里会残留在"插着但没反应"的设备
+        with players_lock:
+            pads = [p.pad for p in players.values()]
+        for pad in pads:
+            unplug = getattr(pad, "unplug", None)
+            if callable(unplug):
+                try:
+                    unplug()
+                except Exception:  # noqa: BLE001
+                    pass
         sock.close()
+        print("[退出] 全部虚拟控制器已移除。")
 
     return 0
 

@@ -3,7 +3,9 @@ using System;
 namespace VirtualGamepadServer;
 
 /// <summary>
-/// 一帧手柄状态。字段语义与 XINPUT_GAMEPAD 完全对齐。
+/// 一帧手柄状态。
+/// 注意：字段语义与 XInput 一致，但<b>字段顺序与位序并不等于</b> XINPUT_GAMEPAD
+/// （例如本项目 A 是 bit0，XInput 里是 0x1000），必须逐位映射，不能直接透传。
 /// </summary>
 public readonly struct GamepadState
 {
@@ -77,11 +79,15 @@ public static class GamepadProtocol
     public const ushort BtnRight = 1 << 13;
     public const ushort BtnGuide = 1 << 14;
 
+    /// <summary>
+    /// 解析一帧。长度必须<b>严格等于</b> 20 字节：UDP 是数据报语义，
+    /// 超长只可能是版本不匹配或被构造，不能"取前 20 字节"继续用。
+    /// </summary>
     public static bool TryParse(byte[] buffer, int length, out GamepadState state)
     {
         state = GamepadState.Neutral;
 
-        if (buffer is null || length < PacketSize)
+        if (buffer is null || length != PacketSize)
         {
             return false;
         }

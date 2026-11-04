@@ -100,8 +100,12 @@ class Pad:
         self.raw_rx = 0
         self.raw_ry = 0
         self.buttons = frozenset()
+        self._prev_buttons = frozenset()
 
     def poll(self):
+        # 边缘检测基准：每帧只在 poll() 里前移一次，
+        # 这样同一帧内可以安全地多次调用 just_pressed()（原实现会吞掉后面的查询）
+        self._prev_buttons = self.buttons
         if not self.ok:
             self.rx = self.ry = 0.0
             self.buttons = frozenset()
@@ -128,10 +132,10 @@ class Pad:
     def pressed(self, name):
         return name in self.buttons
 
-    def just_pressed(self, name, _prev=[set()]):
-        was = name in _prev[0]
-        _prev[0] = set(self.buttons)
-        return name in self.buttons and not was
+    def just_pressed(self, name):
+        # 用实例字段做基准，避免原来的可变默认参数（所有实例共享）与
+        # "每次调用都把基准改成当前帧"导致同帧第二个按键永远返回 False
+        return name in self.buttons and name not in self._prev_buttons
 
 
 # ============================================================================

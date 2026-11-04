@@ -7,6 +7,10 @@
 > **只想尽快用起来？** 先看 [`QUICKSTART.md`](QUICKSTART.md)（按顺序点选的清单）。
 > 本文档讲原理、协议、映射与兼容性边界。
 
+**工程文档**：[代码审计报告](docs/AUDIT.md) · [通信协议规范](docs/PROTOCOL.md) ·
+[测试报告](docs/TEST-REPORT.md) · 共享协议向量 [VGP1](protocol/test_vectors.json) /
+[VGP2](protocol/test_vectors_v2.json)
+
 用安卓手机作为虚拟 Xbox 360 手柄，通过局域网 UDP 把摇杆、方向键、ABXY、肩键、扳机
 实时映射到 PC。PC 端借助 **ViGEmBus** 内核驱动创建虚拟 XInput 设备，游戏在系统层面
 看到的就是一台**真实的 Xbox 360 控制器**——不注入进程、不替换 DLL、不做 API Hook。
