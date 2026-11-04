@@ -645,11 +645,12 @@ class GamepadView @JvmOverloads constructor(
 
     // ---------- 星野背景（Uiverse jaykdoe starfield：三层星点向上漂移） ----------
 
-    /** 星野动画开关（设置 → 背景星野）。开启时每帧重绘，比静态背景略耗电。 */
-    var starField: Boolean = false
+    /** 背景动态效果：0 = 无，1 = 星点漂浮（视差漂移），2 = 午夜星空（闪烁 + 流星）。 */
+    var bgEffect: Int = 0
         set(v) {
-            if (field == v) return
-            field = v
+            val nv = v.coerceIn(0, 2)
+            if (field == nv) return
+            field = nv
             syncStarAnim()
         }
 
@@ -660,27 +661,37 @@ class GamepadView @JvmOverloads constructor(
     private var starStartMs = 0L
     private var starRunning = false
     private val starPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private var bgBuiltMode = -1
+    private var meteorTailBmp: Bitmap? = null
+    private var meteorTailCol = 0
 
     private val starTick = object : Runnable {
         override fun run() {
-            if (!starField || !starRunning) return
+            // 用 postDelayed(16ms) 而不是 postOnAnimation 链：
+            // Choreographer 回调链一旦断掉，动画就会永久冻结（真机复现过）；
+            // Handler 定时循环即使某帧调度失败也能自愈。
+            if (bgEffect == 0 || !isAttachedToWindow) {
+                starRunning = false
+                return
+            }
+            starRunning = true
             invalidate()
-            postOnAnimation(this)
+            postDelayed(this, 16L)
         }
     }
 
     private fun syncStarAnim() {
         if (!isAttachedToWindow) return
         val dark = VgTheme.resolve(context).dark
-        if (starField && width > 0 && height > 0 &&
-            (starLayers == null || starTileW != width || starTileH != height || starDark != dark)
-        ) {
-            buildStars(width, height, dark)
+        val rebuild = starLayers == null || starTileW != width || starTileH != height ||
+            starDark != dark || bgBuiltMode != bgEffect
+        if (bgEffect != 0 && width > 0 && height > 0 && rebuild) {
+            buildStars(width, height, dark, bgEffect)
+            starStartMs = SystemClock.uptimeMillis()
         }
-        val want = starField && starLayers != null
+        val want = bgEffect != 0 && starLayers != null
         if (want && !starRunning) {
             starRunning = true
-            starStartMs = SystemClock.uptimeMillis()
             postOnAnimation(starTick)
         } else if (!want && starRunning) {
             starRunning = false
@@ -688,46 +699,145 @@ class GamepadView @JvmOverloads constructor(
         }
     }
 
-    /** 生成三层星点瓦片（1px 慢层 / 2px 中层 / 3px 快层），数量随屏幕面积缩放。 */
-    private fun buildStars(w: Int, h: Int, dark: Boolean) {
+    /**
+     * 生成星点瓦片：
+     *  mode 1（星点漂浮）→ 三层 1/2/3px，各 ~460/210/90 颗，密度随屏幕缩放；
+     *  mode 2（午夜星空）→ 三层静态星点（对应 CSS 200/300/400px 平铺网格），靠逐层闪烁动起来。
+     */
+    private fun buildStars(w: Int, h: Int, dark: Boolean, mode: Int) {
         starTileW = w
         starTileH = h
         starDark = dark
+        bgBuiltMode = mode
         val rnd = java.util.Random(20261105L)
         val tint = if (dark) 0xFFFFFFFF.toInt() else 0xFF51617A.toInt()
         val baseA = if (dark) 1f else 0.34f
-        val specs = listOf(Triple(1f, 460, 40f), Triple(2f, 210, 20f), Triple(3f, 90, 13.3f))
-        starLayers = specs.map { (size, count, _) ->
-            val bmp = Bitmap.createBitmap(w.coerceAtLeast(1), h.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
-            val bc = Canvas(bmp)
-            val p = Paint(Paint.ANTI_ALIAS_FLAG)
-            repeat(count) {
-                val x = rnd.nextFloat() * w
-                val y = rnd.nextFloat() * h
-                val tw = 0.55f + rnd.nextFloat() * 0.45f
-                p.color = Color.argb(
-                    (255 * baseA * tw).toInt(),
-                    Color.red(tint), Color.green(tint), Color.blue(tint)
-                )
-                bc.drawCircle(x, y, size * 0.5f * dp(1f) * (0.7f + rnd.nextFloat() * 0.5f), p)
+
+        fun dot(bc: Canvas, p: Paint, x: Float, y: Float, r: Float, tw: Float) {
+            p.color = Color.argb(
+                (255 * baseA * tw).toInt(),
+                Color.red(tint), Color.green(tint), Color.blue(tint)
+            )
+            bc.drawCircle(x, y, r, p)
+        }
+
+        val layers = if (mode == 1) {
+            val specs = listOf(Triple(1f, 460, 0f), Triple(2f, 210, 0f), Triple(3f, 90, 0f))
+            specs.map { (size, count, _) ->
+                val bmp = Bitmap.createBitmap(w.coerceAtLeast(1), h.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                val bc = Canvas(bmp)
+                val p = Paint(Paint.ANTI_ALIAS_FLAG)
+                repeat(count) {
+                    dot(bc, p, rnd.nextFloat() * w, rnd.nextFloat() * h,
+                        size * 0.5f * dp(1f) * (0.7f + rnd.nextFloat() * 0.5f),
+                        0.55f + rnd.nextFloat() * 0.45f)
+                }
+                bmp
             }
-            bmp
-        }.toTypedArray()
-        starStartMs = SystemClock.uptimeMillis()
+        } else {
+            val specs = listOf(
+                Triple(1.0f, ((w / 200f) * (h / 200f) * 5).toInt().coerceAtLeast(20), 0f),
+                Triple(1.5f, ((w / 300f) * (h / 300f) * 3).toInt().coerceAtLeast(12), 1f),
+                Triple(2.0f, ((w / 400f) * (h / 400f) * 3).toInt().coerceAtLeast(8), 2f)
+            )
+            specs.map { (size, count, _) ->
+                val bmp = Bitmap.createBitmap(w.coerceAtLeast(1), h.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                val bc = Canvas(bmp)
+                val p = Paint(Paint.ANTI_ALIAS_FLAG)
+                repeat(count) {
+                    dot(bc, p, rnd.nextFloat() * w, rnd.nextFloat() * h,
+                        size * 0.5f * dp(1f), 1f)
+                }
+                bmp
+            }
+        }
+        starLayers = layers.toTypedArray()
     }
 
-    /** 星层向上漂移：三层不同速度（40/20/13.3 dp·s⁻¹），双份瓦片无缝循环。 */
+    /**
+     * mode 1：三层不同速度（40/20/13.3 dp·s⁻¹）向上漂移，双份瓦片无缝循环；
+     * mode 2：三层原地闪烁（3s/5s/7s，相位错开 0/1/2s），叠加间歇流星。
+     */
     private fun drawStars(canvas: Canvas) {
         val layers = starLayers ?: return
-        val h = starTileH.toFloat()
         val el = SystemClock.uptimeMillis() - starStartMs
         val den = resources.displayMetrics.density
-        val speed = floatArrayOf(40f, 20f, 13.3f)
-        for (i in layers.indices) {
-            val off = (el * speed[i] * den / 1000f) % h
-            canvas.drawBitmap(layers[i], 0f, -off, starPaint)
-            canvas.drawBitmap(layers[i], 0f, -off + h, starPaint)
+        if (bgBuiltMode == 1) {
+            val h = starTileH.toFloat()
+            val speed = floatArrayOf(40f, 20f, 13.3f)
+            for (i in layers.indices) {
+                val off = (el * speed[i] * den / 1000f) % h
+                canvas.drawBitmap(layers[i], 0f, -off, starPaint)
+                canvas.drawBitmap(layers[i], 0f, -off + h, starPaint)
+            }
+        } else {
+            val period = floatArrayOf(3f, 5f, 7f)
+            val phase = floatArrayOf(0f, 1f, 2f)
+            for (i in layers.indices) {
+                val k = cos(6.2831853 * ((el / 1000f + phase[i]) / period[i]).toDouble()).toFloat()
+                starPaint.alpha = (255 * (0.6f + 0.4f * k)).toInt().coerceIn(0, 255)
+                canvas.drawBitmap(layers[i], 0f, 0f, starPaint)
+            }
+            starPaint.alpha = 255
+            drawMeteors(canvas, el, starDark)
         }
+    }
+
+    /**
+     * 流星：三颗错峰（8s/12s/10s，相位 0/4s/2s），从右侧 110% 高度 10/30/50% 处
+     * 沿 -33.7° 射向左下（行程 0.75W × 0.5W，占周期前 15%），头部亮圆 + 渐隐尾巴。
+     */
+    private fun drawMeteors(canvas: Canvas, el: Long, dark: Boolean) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val col = if (dark) 0xFFFFFFFF.toInt() else 0xFF51617A.toInt()
+        val meteors = arrayOf(
+            longArrayOf(8000, 0, 10),
+            longArrayOf(12000, 4000, 30),
+            longArrayOf(10000, 2000, 50)
+        )
+        val dx = -w * 0.75f
+        val dy = w * 0.5f
+        val tail = meteorTail(col)
+        val tw = tail.width.toFloat()
+        val th = tail.height.toFloat()
+        for (mm in meteors) {
+            val period = mm[0].toFloat()
+            val u = ((el + mm[1]) % period.toLong()) / period
+            if (u > 0.15f) continue
+            val k = u / 0.15f
+            val fade = if (k < 0.33f) k / 0.33f else (1f - k) / 0.67f
+            val hx = w * 1.10f + dx * k
+            val hy = h * (mm[2] / 100f) + dy * k
+
+            pFill.shader = null
+            pFill.color = col
+            pFill.alpha = (255 * fade).toInt().coerceIn(0, 255)
+            canvas.drawCircle(hx, hy, dp(1.4f), pFill)
+
+            canvas.save()
+            canvas.translate(hx, hy)
+            canvas.rotate(-33.7f)
+            pFill.alpha = (215 * fade).toInt().coerceIn(0, 255)
+            canvas.drawBitmap(tail, 0f, -th / 2f, pFill)
+            canvas.restore()
+            pFill.alpha = 255
+        }
+    }
+
+    /** 渐隐流星尾巴（头亮尾透明），按颜色缓存一张，绘制时旋转到位。 */
+    private fun meteorTail(color: Int): Bitmap {
+        if (meteorTailBmp != null && meteorTailCol == color) return meteorTailBmp!!
+        val len = dp(80f).toInt().coerceAtLeast(8)
+        val th = dp(2.2f).toInt().coerceAtLeast(2)
+        val bmp = Bitmap.createBitmap(len, th, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val p = Paint()
+        p.shader = LinearGradient(0f, 0f, len.toFloat(), 0f, color, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+        c.drawRect(0f, 0f, len.toFloat(), th.toFloat(), p)
+        meteorTailBmp = bmp
+        meteorTailCol = color
+        return bmp
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -899,7 +1009,7 @@ class GamepadView @JvmOverloads constructor(
 
         // 底色与控件同色系：立体感全部交给双向柔和阴影，避免"塑料玩具"感
         neumo.background(canvas, w, h)
-        if (starField && starRunning) drawStars(canvas)
+        if (bgEffect != 0 && starRunning) drawStars(canvas)
 
         fun shown(k: String) = !isHidden(k)
 

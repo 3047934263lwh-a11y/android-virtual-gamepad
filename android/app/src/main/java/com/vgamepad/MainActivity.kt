@@ -350,7 +350,8 @@ class MainActivity : AppCompatActivity() {
         gamepadView.stickScale = prefs.getFloat("stick_scale", 1f)
         gamepadView.buttonScale = prefs.getFloat("button_scale", 1f)
         gamepadView.stickStyle = prefs.getInt("stick_style", 0)
-        gamepadView.starField = prefs.getBoolean("star_field", true)
+        gamepadView.bgEffect = if (prefs.contains("bg_effect")) prefs.getInt("bg_effect", 0)
+        else if (prefs.getBoolean("star_field", true)) 1 else 0   // 旧偏好迁移
         gamepadView.loadLayout(prefs.getString("layout_v1", null))
         gamepadView.loadHidden(prefs.getString("hidden_keys", null))
         gamepadView.hapticsEnabled = hapticsOn
@@ -811,13 +812,24 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        container.addView(label("背景星野"))
-        container.addView(
-            toggle("星星向上漂浮动画（更耗电）", gamepadView.starField) { on ->
-                gamepadView.starField = on
-                prefs.edit().putBoolean("star_field", on).apply()
+        container.addView(label("背景动态效果"))
+        val bgSwitches = ArrayList<MaterialSwitch>(2)
+        var syncingBgSwitch = false
+        fun applyBgMode(mode: Int) {
+            gamepadView.bgEffect = mode
+            prefs.edit().putInt("bg_effect", mode).apply()
+            syncingBgSwitch = true
+            bgSwitches.forEachIndexed { i, sw -> sw.isChecked = i + 1 == mode }
+            syncingBgSwitch = false
+        }
+        listOf("星星漂浮（视差漂移）", "午夜星空（闪烁 + 流星）").forEachIndexed { i, text ->
+            val sw = toggle(text, gamepadView.bgEffect == i + 1) { checked ->
+                if (syncingBgSwitch) return@toggle
+                applyBgMode(if (checked) i + 1 else 0)
             }
-        )
+            bgSwitches.add(sw)
+            container.addView(sw)
+        }
 
         container.addView(label("右摇杆控制"))
         val gyroSw = toggle("陀螺仪瞄准（转手机 = 转视角）", wantGyro) {
