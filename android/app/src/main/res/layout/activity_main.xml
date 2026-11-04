@@ -39,6 +39,7 @@
             android:layout_marginEnd="10dp"
             android:clickable="true"
             android:focusable="true"
+            android:contentDescription="@string/bar_title"
             android:gravity="center_vertical"
             android:orientation="horizontal"
             android:paddingStart="4dp"
@@ -63,6 +64,7 @@
                 android:layout_width="7dp"
                 android:layout_height="7dp"
                 android:layout_marginStart="5dp"
+                android:importantForAccessibility="no"
                 android:background="@drawable/bg_dot_idle" />
 
         </LinearLayout>
@@ -165,7 +167,7 @@
             android:id="@+id/editLabel"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="点选一个按键"
+            android:text="@string/edit_pick"
             android:textColor="@color/text_primary"
             android:textSize="13sp" />
 
@@ -174,10 +176,11 @@
             android:layout_width="150dp"
             android:layout_height="wrap_content"
             android:layout_marginStart="10dp"
+            android:contentDescription="@string/edit_seek_desc"
             android:max="150"
             android:progress="50" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/editResetOne"
             android:elevation="0dp"
             android:stateListAnimator="@null"
@@ -190,11 +193,11 @@
             android:minWidth="0dp"
             android:paddingStart="10dp"
             android:paddingEnd="10dp"
-            android:text="还原此键"
+            android:text="@string/edit_reset_one"
             android:textAllCaps="false"
             android:textSize="12sp" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/editResetAll"
             android:elevation="0dp"
             android:stateListAnimator="@null"
@@ -207,11 +210,11 @@
             android:minWidth="0dp"
             android:paddingStart="10dp"
             android:paddingEnd="10dp"
-            android:text="全部还原"
+            android:text="@string/edit_reset_all"
             android:textAllCaps="false"
             android:textSize="12sp" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/editDone"
             android:elevation="0dp"
             android:stateListAnimator="@null"
@@ -223,7 +226,7 @@
             android:minWidth="0dp"
             android:paddingStart="12dp"
             android:paddingEnd="12dp"
-            android:text="完成"
+            android:text="@string/edit_done"
             android:textAllCaps="false"
             android:textSize="12sp" />
 

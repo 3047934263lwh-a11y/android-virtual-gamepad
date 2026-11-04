@@ -10,4 +10,9 @@
     <string name="status_idle">未连接</string>
     <string name="err_ip">请输入电脑的局域网 IP，例如 192.168.1.20</string>
     <string name="err_port">端口必须为 1-65535</string>
+    <string name="edit_pick">点选一个按键</string>
+    <string name="edit_reset_one">还原此键</string>
+    <string name="edit_reset_all">全部还原</string>
+    <string name="edit_done">完成</string>
+    <string name="edit_seek_desc">按键大小或透明度调节滑杆</string>
 </resources>

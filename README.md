@@ -7,7 +7,8 @@
 > **只想尽快用起来？** 先看 [`QUICKSTART.md`](QUICKSTART.md)（按顺序点选的清单）。
 > 本文档讲原理、协议、映射与兼容性边界。
 
-**工程文档**：[代码审计报告](docs/AUDIT.md) · [通信协议规范](docs/PROTOCOL.md) ·
+**工程文档**：[代码审计报告](docs/AUDIT.md) · [全面复审与修复记录](docs/CODE-AUDIT-2026-11-04.md) ·
+[通信协议规范](docs/PROTOCOL.md) ·
 [测试报告](docs/TEST-REPORT.md) · 共享协议向量 [VGP1](protocol/test_vectors.json) /
 [VGP2](protocol/test_vectors_v2.json)
 

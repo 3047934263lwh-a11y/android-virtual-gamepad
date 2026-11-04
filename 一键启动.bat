@@ -79,7 +79,11 @@ echo    2) Open the phone app - it auto-connects (no button needed)
 echo    3) When the console shows a connection line and 125 pps, start your game
 echo    4) Closing this window removes the virtual gamepad
 echo.
-"%PY%" -u "%PROJ%server-python\server.py" 26760
+if "!PY!"=="py -3" (
+    py -3 -u "%PROJ%server-python\server.py" 26760
+) else (
+    "%PY%" -u "%PROJ%server-python\server.py" 26760
+)
 
 echo.
 echo [STOP] Receiver exited (virtual gamepad removed).

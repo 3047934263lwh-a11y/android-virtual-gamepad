@@ -42,6 +42,8 @@ class Neumo(private val density: Float) {
         private const val TYPE_RECT = 2
         private const val TYPE_INSET = 3
         private const val TYPE_BG = 4
+        private const val TYPE_INNER_TOP = 5
+        private const val TYPE_INNER_BOTTOM = 6
         private const val PRESS_STEPS = 12f
     }
 
@@ -288,8 +290,8 @@ class Neumo(private val density: Float) {
     private fun drawInnerShadowRect(
         canvas: Canvas, rect: RectF, radius: Float, sink: Float, alpha: Float,
     ) {
-        val c = col()
         if (alpha <= 0.004f) return
+        val a = alpha.coerceIn(0f, 1f)
         canvas.save()
         clipRect.set(rect)
         clipRect.offset(0f, sink)
@@ -301,22 +303,44 @@ class Neumo(private val density: Float) {
         canvas.clipPath(clipPath)
 
         val h = clipRect.height()
-        // 顶缘暗影
-        fill.shader = LinearGradient(
-            0f, clipRect.top, 0f, clipRect.top + h * 0.30f,
-            c.withAlpha(0xFF000000.toInt(), 0.20f * alpha.coerceIn(0f, 1f)),
-            Color.TRANSPARENT, Shader.TileMode.CLAMP
-        )
-        canvas.drawRect(clipRect, fill)
+        val w = clipRect.width()
+        // 平移到控件原点，渐变改用局部坐标 → 可以按 (高度档, 主题版本) 缓存，
+        // 稳定状态下每帧不再新建 LinearGradient（原实现每帧 new 2 个）
+        canvas.translate(clipRect.left, clipRect.top)
+        // 顶缘暗影（端色满 alpha，绘制强度由 paint.alpha 控制，与缓存解耦）
+        fill.shader = innerRectShader(h, TYPE_INNER_TOP)
+        fill.alpha = (255 * a).toInt()
+        canvas.drawRect(0f, 0f, w, h, fill)
         // 底缘反光
-        fill.shader = LinearGradient(
-            0f, clipRect.bottom, 0f, clipRect.bottom - h * 0.26f,
-            c.withAlpha(c.shadowLight, 0.42f * alpha.coerceIn(0f, 1f)),
-            Color.TRANSPARENT, Shader.TileMode.CLAMP
-        )
-        canvas.drawRect(clipRect, fill)
+        fill.shader = innerRectShader(h, TYPE_INNER_BOTTOM)
+        canvas.drawRect(0f, 0f, w, h, fill)
         fill.shader = null
+        fill.alpha = 255
         canvas.restore()
+    }
+
+    /** 内阴影渐变（局部坐标）：端色不含 alpha，强度统一由 fill.alpha 乘出。
+     *  key 只依赖高度档与主题版本 → 每个控件形状一条缓存项。 */
+    private fun innerRectShader(h: Float, type: Int): Shader {
+        val k = key(type, (h * 4).toInt().coerceAtLeast(1), 0, 0)
+        shaderCache[k]?.let { return it }
+        val c = col()
+        val sh: Shader = if (type == TYPE_INNER_TOP) {
+            LinearGradient(
+                0f, 0f, 0f, h * 0.30f,
+                c.withAlpha(0xFF000000.toInt(), 0.20f),
+                Color.TRANSPARENT, Shader.TileMode.CLAMP
+            )
+        } else {
+            LinearGradient(
+                0f, h, 0f, h - h * 0.26f,
+                c.withAlpha(c.shadowLight, 0.42f),
+                Color.TRANSPARENT, Shader.TileMode.CLAMP
+            )
+        }
+        if (shaderCache.size > 220) shaderCache.clear()
+        shaderCache[k] = sh
+        return sh
     }
 
     // ---------------- Shader / 缓存 ----------------
@@ -422,9 +446,15 @@ class Neumo(private val density: Float) {
     ): Bitmap {
         shadowCache[key]?.let { if (!it.isRecycled) return it }
         val pad = shadowPad(blur)
-        val bw = (w + pad * 2).toInt().coerceAtLeast(4)
-        val bh = (h + pad * 2).toInt().coerceAtLeast(4)
-        val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+        // 尺寸上限：布局数据异常（s 极大）时避免在 onDraw 里申请巨型位图直接 OOM
+        val bw = (w + pad * 2).toInt().coerceIn(4, 2048)
+        val bh = (h + pad * 2).toInt().coerceIn(4, 2048)
+        val bmp = try {
+            Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+        } catch (e: Throwable) {
+            // 极端情况下（低端机内存紧张）退回 1x1，放弃阴影也不崩
+            return Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+        }
         val bc = Canvas(bmp)
         val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = col().shadowDark

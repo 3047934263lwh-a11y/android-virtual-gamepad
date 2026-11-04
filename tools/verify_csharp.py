@@ -40,7 +40,17 @@ class XInputVibration(ctypes.Structure):
     _fields_ = [("left", ctypes.c_ushort), ("right", ctypes.c_ushort)]
 
 
-xinput = ctypes.WinDLL("xinput1_4.dll")
+def _xinput_dll():
+    # 与 e2e_test.py 一致：老系统可能只有 xinput1_3.dll；都没有则跳过而非崩溃
+    for name in ("xinput1_4.dll", "xinput1_3.dll"):
+        try:
+            return ctypes.WinDLL(name)
+        except OSError:
+            continue
+    return None
+
+
+xinput = _xinput_dll()
 
 
 def frame(buttons=0, lx=0, ly=0, rx=0, ry=0, lt=0, rt=0, seq=0):
@@ -49,6 +59,8 @@ def frame(buttons=0, lx=0, ly=0, rx=0, ry=0, lt=0, rt=0, seq=0):
 
 
 def read(slot=0, retries=6):
+    if xinput is None:
+        return None
     for _ in range(retries):
         st = XInputState()
         if xinput.XInputGetState(slot, ctypes.byref(st)) == 0:
@@ -163,7 +175,8 @@ def main():
     sock.sendto(frame(buttons=BTN["A"], seq=seq), ADDR)
     seq = (seq + 1) & 0xFF
     time.sleep(0.08)
-    base = read().buttons if read() else 0
+    st0 = read()
+    base = st0.buttons if st0 else 0
     bad = [
         ("19 字节短包", frame()[:19]),
         ("21 字节超长包", frame() + b"\x00"),

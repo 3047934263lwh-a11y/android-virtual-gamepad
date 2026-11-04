@@ -23,7 +23,8 @@ Xbox 手柄测试 · 2D 横版跳跃
     十字键   数字量移动（用于对比摇杆模拟量响应）
 
 键盘兜底：←→/AD 移动，W/↑/空格 跳跃，J 二段跳，K 冲刺，S 下砸，
-          Shift 疾跑，Ctrl 缓行，1 回检查点，2 回起点，Tab 面板，Esc 退出
+          Shift 疾跑（不触发 RB），Ctrl 缓行，1 回检查点（LB），2 回起点（RB），
+          Tab 面板，Esc 退出
 
 运行：python xbox_platformer.py [--selftest]
 """
@@ -197,10 +198,12 @@ class Keyboard:
             buttons.add("X")
         if k[pygame.K_k]:
             buttons.add("B")
-        if k[pygame.K_LSHIFT]:
-            buttons.add("RB")
-        if k[pygame.K_RSHIFT]:
+        # Shift 只做疾跑（rt）：不要再 add("RB")——RB 在游戏里是"回关卡起点"，
+        # 以前每按一次 Shift 疾跑都会被瞬移回起点。回检查点/起点改绑 1/2（与文档一致）。
+        if k[pygame.K_1]:
             buttons.add("LB")
+        if k[pygame.K_2]:
+            buttons.add("RB")
         if k[pygame.K_TAB]:
             buttons.add("BACK")
         if k[pygame.K_RETURN]:
@@ -806,7 +809,7 @@ class Game:
         s = self.pad
         panel = pygame.Rect(16, 28, 336, 250)
         pygame.draw.rect(scr, COLOR["panel"], panel, border_radius=12)
-        pygame.draw.rect(scr, COLOR["outline"] if False else (52, 60, 70), panel, 1, border_radius=12)
+        pygame.draw.rect(scr, (52, 60, 70), panel, 1, border_radius=12)
 
         title = self.font.render(f"输入监测  ·  {self.input_source}", True, COLOR["accent"])
         scr.blit(title, (panel.x + 12, panel.y + 8))

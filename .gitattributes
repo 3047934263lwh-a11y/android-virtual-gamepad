@@ -1,0 +1,2 @@
+# Windows 批处理必须 CRLF，否则 cmd.exe 的标签跳转在部分环境失灵
+*.bat text eol=crlf

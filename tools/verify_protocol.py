@@ -33,7 +33,7 @@ def kotlin_serialize(buttons, seq, lx, ly, rx, ry, lt, rt):
 
 def csharp_parse(buf):
     """精确复刻 GamepadProtocol.TryParse。"""
-    if len(buf) < PACKET:
+    if len(buf) != PACKET:      # 真实实现是严格相等；超长包同样必须拒绝
         return None
     if (buf[0], buf[1], buf[2], buf[3]) != MAGIC_BYTES:
         return None
@@ -50,7 +50,7 @@ def csharp_parse(buf):
 
 def python_parse(buf):
     """复刻 server-python/server.py 的 parse()。"""
-    if len(buf) < PACKET or buf[:4] != b"VGP1" or buf[4] != 1:
+    if len(buf) != PACKET or buf[:4] != b"VGP1" or buf[4] != 1:
         return None
     buttons = buf[5] | (buf[6] << 8)
     seq = buf[7]
@@ -84,6 +84,7 @@ bad = [
     ("魔数错误", b"XGP1" + b"\x01" + bytes(15)),
     ("版本错误", b"VGP1" + b"\x02" + bytes(15)),
     ("长度不足", b"VGP1" + bytes(10)),
+    ("21 字节超长包", kotlin_serialize(*cases[0][1:]) + b"\x00"),
 ]
 for label, pkt in bad:
     if csharp_parse(pkt) is not None or python_parse(pkt) is not None:

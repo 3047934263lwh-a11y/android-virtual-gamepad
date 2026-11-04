@@ -83,8 +83,9 @@ class GyroAim(context: Context) : SensorEventListener {
         lastTs = 0L
         emaYaw = 0f
         emaPitch = 0f
-        sm.registerListener(this, s, SensorManager.SENSOR_DELAY_GAME)
-        running = true
+        // registerListener 可能返回 false（传感器被独占/系统限制），
+        // 此时保持 running=false，避免开关显示"已开启"却永远收不到数据
+        running = sm.registerListener(this, s, SensorManager.SENSOR_DELAY_GAME)
     }
 
     fun stop() {

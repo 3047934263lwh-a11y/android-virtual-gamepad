@@ -21,6 +21,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.util.AttributeSet
+import android.util.SparseLongArray
 import android.util.SparseIntArray
 import android.view.MotionEvent
 import android.view.View
@@ -179,12 +180,69 @@ class GamepadView @JvmOverloads constructor(
 
     fun isHidden(key: String): Boolean = hidden.contains(key)
 
-    /** 隐藏后：不绘制、不命中、不参与布局编辑；同时清掉可能仍按着的按键位 */
+    /** 隐藏后：不绘制、不命中、不参与布局编辑；只清被隐藏控件自己的状态，
+     *  其它正在按着的按键/摇杆/扳机不受影响 */
     fun setHidden(key: String, hide: Boolean) {
         if (hide) hidden.add(key) else hidden.remove(key)
-        if (hide) releaseAll()
+        if (hide) releaseKeyState(key)
         computeLayout()
         invalidate()
+    }
+
+    /** 释放某个控件自身的输入状态（隐藏该控件时调用），不影响其它控件 */
+    private fun releaseKeyState(key: String) {
+        val zones = when (key) {
+            "DP" -> intArrayOf(Z_UP, Z_DOWN, Z_LEFT, Z_RIGHT)
+            "LS" -> intArrayOf(Z_LSTICK)
+            "RS" -> intArrayOf(Z_RSTICK)
+            "LT" -> intArrayOf(Z_LT)
+            "RT" -> intArrayOf(Z_RT)
+            "A" -> intArrayOf(Z_A)
+            "B" -> intArrayOf(Z_B)
+            "X" -> intArrayOf(Z_X)
+            "Y" -> intArrayOf(Z_Y)
+            "LB" -> intArrayOf(Z_LB)
+            "RB" -> intArrayOf(Z_RB)
+            "BACK" -> intArrayOf(Z_BACK)
+            "GUIDE" -> intArrayOf(Z_GUIDE)
+            "MENU" -> intArrayOf(Z_MENU)
+            else -> return
+        }
+        for (z in zones) {
+            // 解绑按住该 zone 的手指，并复位该控件的输出
+            for (i in pointers.size() - 1 downTo 0) {
+                if (pointers.valueAt(i) == z) {
+                    pointers.delete(pointers.keyAt(i))
+                    zoneDownAt.delete(z)
+                }
+            }
+            when (z) {
+                Z_LSTICK -> {
+                    lsKnob.set(0f, 0f); state.lx = 0; state.ly = 0
+                    lsInDeadzone = true; lsTapOk = false
+                }
+                Z_RSTICK -> {
+                    rsKnob.set(0f, 0f); state.rx = 0; state.ry = 0
+                    rsInDeadzone = true; rsTapOk = false
+                }
+                Z_LT -> { state.lt = 0; ltDragging = false }
+                Z_RT -> { state.rt = 0; rtDragging = false }
+            }
+        }
+        val bits = when (key) {
+            "DP" -> Btn.UP or Btn.DOWN or Btn.LEFT or Btn.RIGHT
+            "A" -> Btn.A
+            "B" -> Btn.B
+            "X" -> Btn.X
+            "Y" -> Btn.Y
+            "LB" -> Btn.LB
+            "RB" -> Btn.RB
+            "BACK" -> Btn.BACK
+            "GUIDE" -> Btn.GUIDE
+            "MENU" -> Btn.START
+            else -> 0
+        }
+        if (bits != 0) state.buttons = state.buttons and bits.inv()
     }
 
     fun loadHidden(json: String?) {
@@ -272,8 +330,10 @@ class GamepadView @JvmOverloads constructor(
     private val pointers = SparseIntArray()
 
     /** 按压状态跟踪：zone -> 按下/松开时刻 */
-    private val zoneDownAt = SparseIntArray()
-    private val zoneReleaseAt = SparseIntArray()
+    // 时间戳用 Long：uptimeMillis().toInt() 在开机约 24.8 天后回绕为负，
+    // 会让 (now-down) 变成巨大负数、按压/回弹动画永久失效
+    private val zoneDownAt = SparseLongArray()
+    private val zoneReleaseAt = SparseLongArray()
 
     private fun dp(v: Float): Float = v * resources.displayMetrics.density
 
@@ -296,11 +356,11 @@ class GamepadView @JvmOverloads constructor(
     // ---------- 按压状态 ----------
 
     private fun pressP(zone: Int): Float {
-        val now = SystemClock.uptimeMillis().toInt()
-        val down = zoneDownAt.get(zone, 0)
-        if (down > 0) return clamp((now - down) / PRESS_SINK_MS, 0f, 1f)
-        val rel = zoneReleaseAt.get(zone, 0)
-        if (rel > 0) return clamp(1f - (now - rel) / RELEASE_SETTLE_MS, 0f, 1f)
+        val now = SystemClock.uptimeMillis()
+        val down = zoneDownAt.get(zone, 0L)
+        if (down > 0L) return clamp((now - down) / PRESS_SINK_MS, 0f, 1f)
+        val rel = zoneReleaseAt.get(zone, 0L)
+        if (rel > 0L) return clamp(1f - (now - rel) / RELEASE_SETTLE_MS, 0f, 1f)
         return 0f
     }
 
@@ -387,7 +447,14 @@ class GamepadView @JvmOverloads constructor(
         if (amp == lastHapticAmp && now - lastHapticAt < hapticIntervalMs) return
         lastHapticAt = now
         lastHapticAmp = amp
-        v.vibrate(VibrationEffect.createOneShot(hapticDurationMs.toLong(), amp))
+        // VibrationEffect 是 API 26 引入的；minSdk 24 下必须分支，否则 Android 7.x
+        // 一触摸就抛 NoClassDefFoundError（catch Exception 拦不住 Error）
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            v.vibrate(VibrationEffect.createOneShot(hapticDurationMs.toLong(), amp))
+        } else {
+            @Suppress("DEPRECATION")
+            v.vibrate(hapticDurationMs.toLong())
+        }
     }
 
     // ---------- 尺寸调节 ----------
@@ -423,9 +490,11 @@ class GamepadView @JvmOverloads constructor(
                 for (key in CTRL_KEYS) {
                     val o = obj.optJSONObject(key) ?: continue
                     layout[key] = Ctrl(
-                        o.optDouble("dx", 0.0).toFloat(),
-                        o.optDouble("dy", 0.0).toFloat(),
-                        o.optDouble("s", 1.0).toFloat(),
+                        // 布局数据可能来自旧版本/备份恢复/被篡改，全部钳制到合法区间：
+                        // s=0 会摇杆除零得 NaN，s 极大会让阴影位图申请 OOM
+                        o.optDouble("dx", 0.0).toFloat().coerceIn(-1f, 1f),
+                        o.optDouble("dy", 0.0).toFloat().coerceIn(-1f, 1f),
+                        o.optDouble("s", 1.0).toFloat().coerceIn(0.5f, 2.0f),
                         o.optDouble("a", 1.0).toFloat().coerceIn(0.05f, 1f)
                     )
                 }
@@ -434,6 +503,11 @@ class GamepadView @JvmOverloads constructor(
             }
         }
         computeLayout()
+        // 尺寸已知时再按屏幕边界收敛一次（View 未测量时 clampIntoBounds 自会跳过）
+        if (width > 0 && height > 0) {
+            for ((key, c) in layout) clampIntoBounds(key, c)
+            computeLayout()
+        }
         invalidate()
     }
 
@@ -559,6 +633,8 @@ class GamepadView @JvmOverloads constructor(
         introAnim = null
         themeAnim?.cancel()
         themeAnim = null
+        pulseRunnable?.let { removeCallbacks(it) }
+        pulseRunnable = null
         neumo.dispose()
         super.onDetachedFromWindow()
     }
@@ -990,8 +1066,12 @@ class GamepadView @JvmOverloads constructor(
 
     // ---------- 编辑模式覆盖层 ----------
 
+    /** 编辑覆盖层专用的临时矩形：outlineOf 全部复用它，避免编辑模式每帧 new 14+ 个 RectF。
+     *  所有调用点都是"取用即弃"的顺序使用，无嵌套持有。 */
+    private val editRect = RectF()
+
     private fun outlineOf(key: String): RectF {
-        val r = RectF()
+        val r = editRect
         when (key) {
             "LS" -> r.set(lsCenter.x - lsR, lsCenter.y - lsR, lsCenter.x + lsR, lsCenter.y + lsR)
             "RS" -> r.set(rsCenter.x - rsR, rsCenter.y - rsR, rsCenter.x + rsR, rsCenter.y + rsR)
@@ -1108,10 +1188,18 @@ class GamepadView @JvmOverloads constructor(
         return true
     }
 
+    /** 编辑模式锁定的手指 id：多指触控下 MOVE 必须与 DOWN 用同一根手指做差。
+     *  原实现 MOVE 固定用 event.x（恒 index 0），第二根手指按下后第一帧
+     *  会算出等于两指间距的巨大位移，选中控件被瞬移。 */
+    private var editPointerId = -1
+
     private fun handleEditTouch(event: MotionEvent) {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                // 已有拖动手指时忽略后续手指，避免多指互相覆盖选中与落点
+                if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN && editPointerId >= 0) return
                 val i = event.actionIndex
+                editPointerId = event.getPointerId(i)
                 val x = event.getX(i)
                 val y = event.getY(i)
                 selectedKey = zoneKey(zoneAt(x, y, editMode = true))
@@ -1122,11 +1210,16 @@ class GamepadView @JvmOverloads constructor(
 
             MotionEvent.ACTION_MOVE -> {
                 val key = selectedKey ?: return
+                if (editPointerId < 0) return
+                val pi = event.findPointerIndex(editPointerId)
+                if (pi < 0) return
+                val x = event.getX(pi)
+                val y = event.getY(pi)
                 val c = layout.getOrPut(key) { Ctrl() }
-                c.dx += (event.x - editLastX) / width
-                c.dy += (event.y - editLastY) / height
-                editLastX = event.x
-                editLastY = event.y
+                c.dx += (x - editLastX) / width
+                c.dy += (y - editLastY) / height
+                editLastX = x
+                editLastY = y
                 computeLayout()
                 clampIntoBounds(key, c)   // 全屏可拖，只保证控件不越出屏幕
                 computeLayout()
@@ -1144,8 +1237,13 @@ class GamepadView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
-                editLastX = event.x
-                editLastY = event.y
+                // 只有锁定的那根手指抬起才结束拖动；其它手指抬起不影响编辑
+                if (event.actionMasked == MotionEvent.ACTION_UP ||
+                    event.actionMasked == MotionEvent.ACTION_CANCEL ||
+                    event.getPointerId(event.actionIndex) == editPointerId
+                ) {
+                    editPointerId = -1
+                }
             }
         }
     }
@@ -1153,8 +1251,11 @@ class GamepadView @JvmOverloads constructor(
     private fun bindPointer(id: Int, x: Float, y: Float) {
         val zone = zoneAt(x, y)
         if (zone == Z_NONE) return
+        // 同一 zone 只接受第一根手指：多指同区会互相覆盖落点/拖动态，
+        // 摇杆值在两指间跳变、L3/R3 轻点也会误判
+        if (heldByOther(zone)) return
         pointers.put(id, zone)
-        zoneDownAt.put(zone, SystemClock.uptimeMillis().toInt())
+        zoneDownAt.put(zone, SystemClock.uptimeMillis())
 
         // 摇杆轻点（L3/R3）：记住落点，抬起时位移足够小才判定为"按下摇杆"
         when (zone) {
@@ -1229,7 +1330,7 @@ class GamepadView @JvmOverloads constructor(
         val zone = pointers.get(id, Z_NONE)
         if (zone == Z_NONE) return
         pointers.delete(id)
-        zoneReleaseAt.put(zone, SystemClock.uptimeMillis().toInt())
+        zoneReleaseAt.put(zone, SystemClock.uptimeMillis())
         if (heldByOther(zone)) return
         zoneDownAt.delete(zone)   // 清除按下时间戳，避免长按状态残留
 
@@ -1336,6 +1437,9 @@ class GamepadView @JvmOverloads constructor(
         state.buttons = if (on) state.buttons or bit else state.buttons and bit.inv()
     }
 
+    /** 最近的脉冲 Runnable 引用：重新脉冲/detach 时 removeCallbacks 用 */
+    private var pulseRunnable: Runnable? = null
+
     /** 置位 L3/R3 并保持 [STICK_PULSE_MS]；token 保证旧脉冲不会提前清掉新脉冲。 */
     private fun pulseThumb(left: Boolean) {
         setThumbBit(left, on = true)
@@ -1349,13 +1453,16 @@ class GamepadView @JvmOverloads constructor(
         haptic(0.55f)
         invalidate()
         val token = if (left) lsPulseToken else rsPulseToken
-        postDelayed({
+        pulseRunnable?.let { removeCallbacks(it) }
+        val r = Runnable {
             val cur = if (left) lsPulseToken else rsPulseToken
             if (cur == token) {
                 setThumbBit(left, on = false)
                 invalidate()
             }
-        }, STICK_PULSE_MS)
+        }
+        pulseRunnable = r
+        postDelayed(r, STICK_PULSE_MS)
     }
 
     private fun zoneAt(x: Float, y: Float, editMode: Boolean = false): Int {
@@ -1432,6 +1539,8 @@ class GamepadView @JvmOverloads constructor(
         val ny = dy / dist
         knob.set(nx * clamped, ny * clamped)
 
+        // radius<=0（布局数据异常）时避免除零得 NaN
+        if (radius <= 0f) return
         val raw = clamped / radius
         val mag = if (raw <= DEADZONE) 0f else (raw - DEADZONE) / (1f - DEADZONE)
 
@@ -1462,7 +1571,9 @@ class GamepadView @JvmOverloads constructor(
     }
 
     private fun triggerValue(r: RectF, y: Float): Int {
-        val frac = ((y - r.top) / r.height()).coerceIn(0f, 1f)
+        val hgt = r.height()
+        if (hgt <= 0f) return 255   // 轨道高度异常时按"满行程"处理，与单击语义一致
+        val frac = ((y - r.top) / hgt).coerceIn(0f, 1f)
         return (frac * 255f).toInt()
     }
 

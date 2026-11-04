@@ -23,10 +23,15 @@ object Btn {
 }
 
 /**
- * 手柄当前状态。写入方为 UI 线程（GamepadView），读取方为发送线程（UdpSender），
- * 因此每个字段都使用 @Volatile 保证可见性。16 位以内整型的读写本身是原子的。
+ * 手柄当前状态。写入方为 UI 线程（GamepadView）/传感器线程（GyroAim），
+ * 读取方为发送线程（UdpSender），因此每个字段都使用 @Volatile 保证可见性。
+ * 16 位以内整型的读写本身是原子的；「跨字段成组读写」（reset 与序列化）
+ * 通过 ioLock 串行化，避免组装出 buttons 已清零而扳机仍有值的半帧。
  */
 class GamepadState {
+
+    /** 跨字段成组读写的互斥锁：UdpSender.serialize 与 reset() 共用 */
+    val ioLock = Any()
 
     @Volatile
     var buttons: Int = 0
@@ -76,12 +81,14 @@ class GamepadState {
     var gyroRy: Int = 0
 
     fun reset() {
-        buttons = 0
-        lx = 0
-        ly = 0
-        rx = 0
-        ry = 0
-        lt = 0
-        rt = 0
+        synchronized(ioLock) {
+            buttons = 0
+            lx = 0
+            ly = 0
+            rx = 0
+            ry = 0
+            lt = 0
+            rt = 0
+        }
     }
 }

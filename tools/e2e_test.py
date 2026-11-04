@@ -75,8 +75,11 @@ def send_group(sock, buttons, lx, ly, rx, ry, lt, rt, start_seq, count=40):
 
 
 def main():
+    # 子进程显式注入 UTF-8：中文 Windows 管道默认 GBK，按 utf-8 解码会把
+    # 「已连接/[连接]」变成替换字符，导致连接日志判定恒为 FAIL
+    env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
     srv = subprocess.Popen(
-        PROC, cwd=SERVER_DIR,
+        PROC, cwd=SERVER_DIR, env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace",
     )
@@ -121,7 +124,7 @@ def main():
     print("--- 接收端输出 ---")
     print(out)
 
-    log_ok = ("已连接" in out or "[连接]" in out) and "pps" in out
+    log_ok = "pps" in out and ("已连接" in out or "[连接]" in out or "[1P]" in out)
     checks.insert(0, ("接收端连接与速率日志", log_ok, ""))
 
     print("--- 判定 ---")

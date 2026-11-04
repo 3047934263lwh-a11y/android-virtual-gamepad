@@ -11,17 +11,17 @@ android {
         applicationId "com.vgamepad"
         minSdk 24
         targetSdk 35
-        versionCode 22
-        versionName "1.11.0"
+        versionCode 23
+        versionName "1.11.1"
     }
 
     buildTypes {
         release {
-            minifyEnabled false
+            // 2026-11-04 复审（M-19）起启用压缩与混淆；
+            // keep 规则只保留 XML inflate 所需的自定义 View 构造函数
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-        }
-        debug {
-            applicationIdSuffix ""
         }
     }
 

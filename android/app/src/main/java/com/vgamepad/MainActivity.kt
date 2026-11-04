@@ -175,6 +175,11 @@ class MainActivity : AppCompatActivity() {
         // 否则会在启动后再触发一次 Activity 重建（闪一下）。
         VgTheme.applyNightMode(VgTheme.mode(this))
         super.onCreate(savedInstanceState)
+        // 主题切换（uiMode 不在 configChanges 内）等场景会重建 Activity：
+        // 恢复「用户已手动断开」标记，避免重建后被无条件自动重连覆盖用户意图
+        if (savedInstanceState != null) {
+            userStopped = savedInstanceState.getBoolean("user_stopped", false)
+        }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_main)
         applyImmersive()
@@ -295,11 +300,17 @@ class MainActivity : AppCompatActivity() {
             editBar.visibility = android.view.View.GONE
         }
 
-        // 一键体验：保存过服务器地址就自动连接；之后由自动重连状态机维持链路
+        // 一键体验：保存过服务器地址且用户未主动断开过就自动连接；
+        // 之后由自动重连状态机维持链路
         registerNetworkCallback()
-        if (prefs.getString("ip", "")?.isNotBlank() == true) {
+        if (!userStopped && prefs.getString("ip", "")?.isNotBlank() == true) {
             connect()
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean("user_stopped", userStopped)
     }
 
     /**
@@ -1129,7 +1140,13 @@ class MainActivity : AppCompatActivity() {
         if (a == lastRumbleAmp && now - lastRumbleAt < gap) return
         lastRumbleAt = now
         lastRumbleAmp = a
-        v.vibrate(VibrationEffect.createOneShot(dur.toLong(), a))
+        // VibrationEffect 是 API 26 引入的；minSdk 24 下必须分支，否则 Android 7.x 崩溃
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            v.vibrate(VibrationEffect.createOneShot(dur.toLong(), a))
+        } else {
+            @Suppress("DEPRECATION")
+            v.vibrate(dur.toLong())
+        }
     }
 
     // ---------- 连接 ----------
@@ -1426,6 +1443,8 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         userStopped = true
         uiHandler.removeCallbacksAndMessages(null)
+        barAnim?.cancel()   // 释放对 Activity/View 的引用，避免销毁后动画回调继续访问
+        barAnim = null
         networkCallback?.let { cb ->
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             try { cm?.unregisterNetworkCallback(cb) } catch (e: Exception) { }

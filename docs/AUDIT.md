@@ -43,7 +43,8 @@
 - **影响**：旧接收端可能把 VGP2 或畸形包当作合法输入；Android 端可能把超长回包误判为震动/编号。
 - **修复**：三端改为严格相等（Python `!=`、C# `!=`、Kotlin `==`）。
 - **验证方式**：`tools/test_protocol.py::test_reject_malformed_packets` 覆盖 19B / 21B / 空包 / 错 magic / 错版本。
-- **状态**：**已修复**，测试通过。
+- **状态**：**已修复**，测试通过。（2026-11-04 复审补充：`tools/verify_protocol.py` 当时仍用 `<`，
+  本轮已改为 `!=` 并补 21 字节超长包负向用例，与真实实现对齐。）
 
 ### A-04 Python 接收端退出时未移除虚拟手柄
 
@@ -51,9 +52,14 @@
 - **原因**：只关闭 socket，没有 `pad.unplug()`。
 - **触发**：Ctrl+C / 关闭窗口 / 脚本 kill。
 - **影响**：ViGEmBus 中残留"插着但无响应"的虚拟手柄，游戏枚举到幽灵设备；多次重启会累积。
-- **修复**：`finally` 中遍历 `players` 逐个 `unplug()`（`getattr` 保护，旧版 vgamepad 无此方法时跳过），并打印退出确认。
-- **验证方式**：`tools/e2e_test.py` 结束时会 terminate 服务端，随后再次启动不报设备冲突；脚本输出 `[退出] 全部虚拟控制器已移除。`
-- **状态**：**已修复**，e2e 通过。
+- **修复**：~~`finally` 中遍历 `players` 逐个 `unplug()`（`getattr` 保护）~~
+  **该实现无效**：vgamepad 根本没有 `unplug()` 方法（实测 `hasattr(VX360Gamepad,'unplug')==False`），
+  `getattr` 恒为 None，清理从未执行过，"已修复"是假成功。
+  2026-11-04 复审已真正修复：新增 `unplug_pad()` 显式调用
+  `unregister_notification()` + `vcli.vigem_target_remove()`（free 留给析构，避免 double-free）；
+  同时打破震动回调闭包对 `players` 的引用环（改走模块级 `RUMBLE_ADDRS`），
+  退出信息按实际移除数打印。
+- **状态**：**已修复（2026-11-04 复审轮，重写实现）**。
 
 ### A-05 C# 接收端缺少震动回传与玩家编号
 

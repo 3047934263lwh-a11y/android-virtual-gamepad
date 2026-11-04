@@ -6,7 +6,7 @@
     <color name="surface_variant">#FF2A2F36</color>
     <color name="field_bg">#FF1E2227</color>
     <color name="outline">#FF363C45</color>
-    <color name="bar_bg">#F222262C</color>
+    <color name="bar_bg">#FF22262C</color>
     <color name="bar_stroke">#FF31373F</color>
     <color name="panel_bg">#FF20242A</color>
     <color name="panel_stroke">#FF333941</color>

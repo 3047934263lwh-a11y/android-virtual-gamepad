@@ -48,7 +48,8 @@ RESULT: PASS
 - 20 字节严格解析（超长/截断包被拒）
 - 报文 → ViGEm → XInput 全链路
 - 1.2 秒空闲回中（日志出现「输入已回中」）
-- 退出时 `unplug()` 不抛异常
+- 退出时清理虚拟手柄（2026-11-04 复审修正：vgamepad 无 `unplug()`，
+  现为 `unplug_pad()` 显式 `vigem_target_remove`，e2e 的 terminate 路径并不覆盖该验证）
 
 ---
 

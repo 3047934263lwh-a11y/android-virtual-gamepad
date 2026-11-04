@@ -26,7 +26,17 @@ class S(ctypes.Structure):
                 ("rx", ctypes.c_short), ("ry", ctypes.c_short)]
 
 
-xi = ctypes.WinDLL("xinput1_4.dll")
+def _xinput_dll():
+    # 老系统可能只有 xinput1_3.dll；都没有则跳过而非崩溃
+    for name in ("xinput1_4.dll", "xinput1_3.dll"):
+        try:
+            return ctypes.WinDLL(name)
+        except OSError:
+            continue
+    return None
+
+
+xi = _xinput_dll()
 
 
 def frame(b=0, seq=0):

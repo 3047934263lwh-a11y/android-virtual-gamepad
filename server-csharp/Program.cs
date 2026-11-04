@@ -80,9 +80,10 @@ internal static class Program
                 _running = false;
             };
 
+            int rc;
             try
             {
-                RunLoop(pad, port);
+                rc = RunLoop(pad, port);
             }
             finally
             {
@@ -95,14 +96,18 @@ internal static class Program
                     // 驱动已卸载时忽略
                 }
             }
-        }
 
-        Console.WriteLine();
-        Console.WriteLine("[退出] 虚拟控制器已移除。");
-        return 0;
+            Console.WriteLine();
+            // 启动失败（如端口被占用）必须以非零码退出，供脚本与 CI 判断
+            if (rc == 0)
+            {
+                Console.WriteLine("[退出] 虚拟控制器已移除。");
+            }
+            return rc;
+        }
     }
 
-    private static void RunLoop(IXbox360Controller pad, int port)
+    private static int RunLoop(IXbox360Controller pad, int port)
     {
         using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         try
@@ -114,7 +119,7 @@ internal static class Program
             Fail($"无法绑定 UDP 端口 {port}", ex);
             Console.WriteLine("  端口可能被占用，或需要管理员权限。可指定其他端口：");
             Console.WriteLine("  VirtualGamepadServer.exe 26761");
-            return;
+            return 1;
         }
 
         socket.ReceiveTimeout = 250;
@@ -185,16 +190,19 @@ internal static class Program
 
                 // 排空积压，只应用最新一包：
                 // 陈旧报文逐个"补放"会造成视角漂移惯性（松手后仍滑动）。
+                // 回传地址只认「成功解析」的报文来源：非法/伪造包不得劫持震动回发地址。
+                EndPoint goodRemote = remote;
                 while (socket.Available > 0)
                 {
                     received = socket.ReceiveFrom(buffer, ref remote);
                     if (GamepadProtocol.TryParse(buffer, received, out var newer))
                     {
                         state = newer;
+                        goodRemote = remote;
                     }
                 }
 
-                if (remote is IPEndPoint ep)
+                if (goodRemote is IPEndPoint ep)
                 {
                     _lastClient = ep;   // 供震动回传定位手机
                     string who = ep.ToString();
@@ -304,6 +312,9 @@ internal static class Program
                 lastReportTs = Stopwatch.GetTimestamp();
             }
         }
+
+        // Ctrl+C（_running = false）退出
+        return 0;
     }
 
     /// <summary>
