@@ -17,6 +17,7 @@ Use an Android phone as a virtual Xbox 360 controller. Sticks, D-pad, ABXY, bump
 | **Gyro aiming** | Turn the phone = turn the camera (fused orientation, no drift); adds on top of the right stick; invert yaw/pitch toggles |
 | **Two independent sensitivities** | "Gyro camera sensitivity" and "right-stick camera sensitivity" are separate 0–100 settings; changing one never affects the other |
 | Rumble feedback | `XInputSetState` motor data is streamed back to the phone |
+| **☰ Menu key** | Dedicated round Menu button (same as `START`); games that ask you to press Menu to join work out of the box. Position/size editable like any other control |
 | **Stick click (LS / RS)** | Three selectable trigger modes in Settings: (1) tap the stick centre, (2) double-tap anywhere inside the stick, (3) hold whenever the stick is operated. Pushing the stick never triggers a click |
 | Per-control editing | Move / resize / set opacity of every control, saved automatically |
 | Dark glass UI | Obsidian layered-glass look, high-contrast colored ABXY letters, press-sink animation |

@@ -70,6 +70,7 @@ class GamepadView @JvmOverloads constructor(
         const val Z_RB = 31
         const val Z_BACK = 32
         const val Z_START = 33
+        const val Z_MENU = 34            // ☰ 菜单键（与 START 同功能，游戏里的 Menu）
         const val Z_LT = 40
         const val Z_RT = 41
 
@@ -134,12 +135,13 @@ class GamepadView @JvmOverloads constructor(
 
         /** 可编辑控件 key */
         val CTRL_KEYS = listOf(
-            "LS", "RS", "DP", "A", "B", "X", "Y", "LB", "RB", "BACK", "START", "LT", "RT"
+            "LS", "RS", "DP", "A", "B", "X", "Y", "LB", "RB", "BACK", "START", "MENU", "LT", "RT"
         )
         val CTRL_NAMES = mapOf(
             "LS" to "左摇杆", "RS" to "右摇杆", "DP" to "方向键",
             "A" to "A", "B" to "B", "X" to "X", "Y" to "Y",
             "LB" to "LB", "RB" to "RB", "BACK" to "BACK", "START" to "START",
+            "MENU" to "菜单键（☰）",
             "LT" to "LT", "RT" to "RT"
         )
     }
@@ -180,6 +182,8 @@ class GamepadView @JvmOverloads constructor(
     private val rectRB = RectF()
     private val rectBack = RectF()
     private val rectStart = RectF()
+    private val cMenu = PointF()
+    private var rMenu = 0f
     private val tmp = RectF()
     private val tmp2 = RectF()
     private val fullRect = RectF()
@@ -458,6 +462,7 @@ class GamepadView @JvmOverloads constructor(
         Z_RB -> "RB"
         Z_BACK -> "BACK"
         Z_START -> "START"
+        Z_MENU -> "MENU"
         Z_LT -> "LT"
         Z_RT -> "RT"
         else -> null
@@ -532,6 +537,11 @@ class GamepadView @JvmOverloads constructor(
         pill("BACK", W * 0.412f, W * 0.080f * kBtn, rectBack)
         pill("START", W * 0.588f, W * 0.080f * kBtn, rectStart)
 
+        // ☰ 菜单键：独立圆形玻璃键，默认位于 START 右下方（避开肩键与右摇杆）
+        val menu = ov("MENU")
+        rMenu = base * 0.050f * kBtn * menu.s
+        cMenu.set(W * 0.340f + menu.dx * W, H * 0.320f + menu.dy * H)
+
         val trigW = min(W * 0.050f * kBtn, W * 0.055f)
         val trigH = H * 0.370f * kBtn
         val trigCy = H * 0.435f
@@ -575,6 +585,7 @@ class GamepadView @JvmOverloads constructor(
         "DP" -> 150f
         "BACK" -> 200f
         "START" -> 240f
+        "MENU" -> 260f
         "RS" -> 280f
         "RB" -> 320f
         "RT" -> 360f
@@ -818,6 +829,7 @@ class GamepadView @JvmOverloads constructor(
         drawPill(canvas, rectRB, "RB", (state.buttons and Btn.RB) != 0, "RB")
         drawPill(canvas, rectBack, "BACK", (state.buttons and Btn.BACK) != 0, "BACK")
         drawPill(canvas, rectStart, "START", (state.buttons and Btn.START) != 0, "START")
+        drawMenuButton(canvas)
 
         if (editMode) drawEditOverlay(canvas)
     }
@@ -973,6 +985,30 @@ class GamepadView @JvmOverloads constructor(
         pText.alpha = 255
     }
 
+    /** ☰ 菜单键：黑曜石玻璃圆钮 + 三条横线，按下与 START 同步高亮。 */
+    private fun drawMenuButton(c: Canvas) {
+        if (rMenu <= 0f) return
+        val (a01, ty) = introOf("MENU")
+        if (a01 <= 0f) return
+        val ca01 = a01 * ov("MENU").a
+        val active = (state.buttons and Btn.START) != 0
+        val pp = pressP(Z_MENU)
+        val cy = cMenu.y + ty
+
+        layeredGlassCircle(c, cMenu.x, cy, rMenu, pp, ca01, active)
+
+        // 三条横线（☰）
+        val lw = rMenu * 0.56f
+        val lh = maxOf(dp(2.4f), rMenu * 0.105f)
+        val gap = rMenu * 0.245f
+        pFill.color = fade(if (active || pp > 0.5f) C_TXT_ON else C_TXT, ca01)
+        for (k in -1..1) {
+            val ly = cy + k * gap
+            tmp.set(cMenu.x - lw / 2f, ly - lh / 2f, cMenu.x + lw / 2f, ly + lh / 2f)
+            c.drawRoundRect(tmp, lh / 2f, lh / 2f, pFill)
+        }
+    }
+
     private fun drawTrigger(c: Canvas, r: RectF, label: String, value: Int, key: String) {
         val (a01, ty) = introOf(key)
         if (a01 <= 0f) return
@@ -1010,7 +1046,7 @@ class GamepadView @JvmOverloads constructor(
     private fun zoneOfKey(key: String): Int = when (key) {
         "LS" -> Z_LSTICK; "RS" -> Z_RSTICK
         "A" -> Z_A; "B" -> Z_B; "X" -> Z_X; "Y" -> Z_Y
-        "LB" -> Z_LB; "RB" -> Z_RB; "BACK" -> Z_BACK; "START" -> Z_START
+        "LB" -> Z_LB; "RB" -> Z_RB; "BACK" -> Z_BACK; "START" -> Z_START; "MENU" -> Z_MENU
         "LT" -> Z_LT; "RT" -> Z_RT
         else -> Z_NONE
     }
@@ -1018,6 +1054,7 @@ class GamepadView @JvmOverloads constructor(
     private fun bitByName(key: String): Int = when (key) {
         "A" -> Btn.A; "B" -> Btn.B; "X" -> Btn.X; "Y" -> Btn.Y
         "LB" -> Btn.LB; "RB" -> Btn.RB; "BACK" -> Btn.BACK; "START" -> Btn.START
+        "MENU" -> Btn.START     // 菜单键与 START 同功能
         else -> 0
     }
 
@@ -1037,6 +1074,7 @@ class GamepadView @JvmOverloads constructor(
             "RB" -> r.set(rectRB)
             "BACK" -> r.set(rectBack)
             "START" -> r.set(rectStart)
+            "MENU" -> r.set(cMenu.x - rMenu, cMenu.y - rMenu, cMenu.x + rMenu, cMenu.y + rMenu)
             "LT" -> r.set(rectLT)
             "RT" -> r.set(rectRT)
         }
@@ -1222,7 +1260,7 @@ class GamepadView @JvmOverloads constructor(
             Z_A, Z_B, Z_X, Z_Y -> 1.0f
             Z_LB, Z_RB -> 0.85f
             Z_UP, Z_DOWN, Z_LEFT, Z_RIGHT -> 0.75f
-            Z_START, Z_BACK -> 0.70f
+            Z_START, Z_BACK, Z_MENU -> 0.70f
             Z_LT, Z_RT -> 0.50f
             else -> 0f
         }
@@ -1272,9 +1310,20 @@ class GamepadView @JvmOverloads constructor(
             Z_RT -> state.rt = 0
             else -> {
                 val bit = bitOf(zone)
-                if (bit != 0) state.buttons = state.buttons and bit.inv()
+                // START 与 MENU 共用同一个按键位：另一只手还按着同一位时不要清除
+                if (bit != 0 && !bitHeldByOther(bit)) {
+                    state.buttons = state.buttons and bit.inv()
+                }
             }
         }
+    }
+
+    /** 是否还有其它手指按着同一个按键位（START 与 MENU 共用 START 位）。 */
+    private fun bitHeldByOther(bit: Int): Boolean {
+        for (i in 0 until pointers.size()) {
+            if (bitOf(pointers.valueAt(i)) == bit) return true
+        }
+        return false
     }
 
     private fun heldByOther(zone: Int): Boolean {
@@ -1375,6 +1424,7 @@ class GamepadView @JvmOverloads constructor(
         if (rectRB.contains(x, y)) return Z_RB
         if (rectBack.contains(x, y)) return Z_BACK
         if (rectStart.contains(x, y)) return Z_START
+        if (rMenu > 0f && hypot(x - cMenu.x, y - cMenu.y) <= rMenu * faceMul) return Z_MENU
 
         if (rectLT.contains(x, y)) return Z_LT
         if (rectRT.contains(x, y)) return Z_RT
@@ -1475,7 +1525,7 @@ class GamepadView @JvmOverloads constructor(
         Z_LB -> Btn.LB
         Z_RB -> Btn.RB
         Z_BACK -> Btn.BACK
-        Z_START -> Btn.START
+        Z_START, Z_MENU -> Btn.START
         Z_UP -> Btn.UP
         Z_DOWN -> Btn.DOWN
         Z_LEFT -> Btn.LEFT
