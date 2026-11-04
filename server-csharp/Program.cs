@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 using Nefarius.ViGEm.Client;
 using Nefarius.ViGEm.Client.Targets;
 using Nefarius.ViGEm.Client.Targets.Xbox360;
@@ -118,6 +119,20 @@ internal static class Program
 
         socket.ReceiveTimeout = 250;
 
+        // Windows: 关闭「ICMP 端口不可达 → WSAECONNRESET」的上报。
+        // 手机端进程退出或切换网络后，本机下一次 SendTo 会收到 ICMP 不可达，
+        // Windows 默认让后续 ReceiveFrom 连续抛 ConnectionReset：
+        // 表现为日志刷屏 + 100% CPU 空转，且换新手机也收不进来。
+        // SIO_UDP_CONNRESET = 0x9800000C，参数全 0 表示不再上报该通知。
+        try
+        {
+            socket.IOControl(unchecked((int)0x9800000C), new byte[4], null);
+        }
+        catch (SocketException)
+        {
+            // 受限环境忽略：下面的 ConnectionReset 分支仍会兜底
+        }
+
         // ---- 反向通道：游戏震动 → 手机 ----
         // 8 字节定长，与 Android 端 UdpSender.rumbleLoop / Python 端完全一致：
         //   "VGPR" + version(1) + large(0-255) + small(0-255) + reserved(0)
@@ -149,6 +164,7 @@ internal static class Program
         string? activeClient = null;
         long lastPacketTs = Stopwatch.GetTimestamp();
         long lastReportTs = lastPacketTs;
+        long lastErrorTs = 0;
         bool neutral = true;
         long packets = 0;
         long lost = 0;
@@ -231,6 +247,12 @@ internal static class Program
                     Console.WriteLine($"[超时] {IdleResetMs} ms 未收到数据，输入已回中。");
                 }
             }
+            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.ConnectionReset)
+            {
+                // 对端已关闭（ICMP 端口不可达被翻译为 ConnectionReset）：
+                // 不是致命错误。短暂让出 CPU，避免接收循环空转。
+                Thread.Sleep(5);
+            }
             catch (SocketException ex)
             {
                 if (!_running)
@@ -238,8 +260,15 @@ internal static class Program
                     break;
                 }
 
-                Console.WriteLine();
-                Console.WriteLine($"[错误] 接收失败：{ex.SocketErrorCode}");
+                // 限流：异常持续发生时不要每毫秒刷一行
+                if (ElapsedMs(lastErrorTs) >= 1000)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine($"[错误] 接收失败：{ex.SocketErrorCode}");
+                    lastErrorTs = Stopwatch.GetTimestamp();
+                }
+
+                Thread.Sleep(10);
             }
             catch (ObjectDisposedException)
             {

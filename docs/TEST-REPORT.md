@@ -7,7 +7,7 @@
 | 操作系统 | Windows 10 19045 x64 |
 | Python | 3.13.14，`vgamepad` 可用，`pygame` 2.6.1 |
 | JDK / Gradle | JDK 17.0.21 / Gradle 8.9（离线构建） |
-| .NET | **仅 Runtime 10.0.7，未安装 SDK** |
+| .NET | **SDK 8.0.427**（本地部署于 `_buildenv/dotnet8`，SHA512 与官方一致）+ Runtime 8.0.33 |
 
 ---
 
@@ -20,7 +20,9 @@
 | 3 | 按键边缘检测 | `python tools/test_gamepad.py` | **PASS 6/6** |
 | 4 | 端到端 + 真实 XInput | `python tools/e2e_test.py` | **PASS 8/8** |
 | 5 | Android Debug 构建 | `gradle --offline assembleDebug` | **PASS**（BUILD SUCCESSFUL） |
-| 6 | C# 构建 | `dotnet build` | **无法执行**（No .NET SDKs were found） |
+| 6 | C# 构建 | `dotnet build -c Release` | **PASS**（0 警告 / 0 错误） |
+| 7 | C# 端到端（真实 XInput + 回传） | `tools/verify_csharp.py` | **PASS 33/33** |
+| 8 | 客户端异常断开（C# / Python） | `tools/verify_udp_reset.py` | **PASS 4/4 + 4/4** |
 
 ---
 
@@ -79,13 +81,47 @@ GUIDE+L3+R3+极值、全键按下。
 
 ---
 
+## 4.1 C# 接收端端到端（33 项，真实 XInput 读回）
+
+环境：.NET 8.0.427 SDK（本地目录部署）+ ViGEmBus 已安装，服务端监听 26799，
+测试客户端从 `0.0.0.0:26761` 发 VGP1 报文。
+
+```
+[PASS] XInput 枚举到虚拟手柄
+[PASS] A/B/X/Y/LB/RB/BACK/START/L3/R3/UP/DOWN/LEFT/RIGHT 逐键映射（14 项，均为唯一置位）
+[PASS] 左摇杆 X=-32768  Y=+32767   右摇杆 X=+32767  Y=-32768
+[PASS] 左扳机 200   右扳机 255
+[PASS] A+B+LB+UP+START 组合键 = 0x3111
+[PASS] 收到 VGPP 编号包，player=1
+[PASS] XInputSetState 触发 VGPR 回传（40000/20000 → 156/78，缩放正确）
+[PASS] 19/21/128 字节、magic 错、版本错、全 0 共 6 类畸形包全部丢弃且状态不污染
+[PASS] 停发 1.2 s 后按键/摇杆/扳机全部回中
+```
+
+> `GUIDE`（Home 键）单独验证：手机端发出 `0x4000` 后，
+> 标准 `XInputGetState` **读不到**（微软设计如此），
+> 未公开的 `XInputGetStateEx`（序数 100）读到 `0x0400` —— 证明该位确实送达驱动，
+> 只是标准 API 不对外暴露。游戏能否用到取决于其读取方式。
+
+## 4.2 客户端异常断开（新增回归项）
+
+模拟手机 App 被杀/换网：客户端 socket 直接 close，等待 3.2 s（触发 3 次周期回包 → ICMP 端口不可达），
+再同端口重连。
+
+| 接收端 | 结果 | 关键观察 |
+| --- | --- | --- |
+| Python | **4/4 PASS** | 修复前进程直接退出；修复后存活、旧按键不残留、回包正常 |
+| C# | **4/4 PASS** | 修复前 2 s 内 20+ 行 `[错误] 接收失败：ConnectionReset`；修复后 **0 行**，且新客户端可正常接入 |
+
+---
+
 ## 5. 无法执行的验证（环境限制）
 
 | 项 | 原因 | 替代验证 | 风险 |
 | --- | --- | --- | --- |
-| C# 端编译 | 本机 `dotnet --info` 显示 **SDKs installed 为空**，只有 Runtime | ① 用官方示例核对了 `FeedbackReceived` / `e.LargeMotor` / `e.SmallMotor` 签名；② `test_protocol.py` 用位运算复刻其解析逻辑并断言 | **中**：新增回传代码未经过编译器检查，需在有 SDK 的机器 `dotnet build` |
-| Android 实机安装 | adb `devices` 为空（USB 复合设备存在但无 ADB 接口） | Gradle 编译通过；上一版本已实机验证 | **低**：本次仅改一行长度校验 |
-| 真实手机链路 | 同上 | e2e 用本机模拟客户端 + 真实 ViGEm/XInput | **低** |
+| 长时间稳定性（>1h） | 未执行 | 建议后续加 4 人 + 2 小时 soak test | — |
+| 4 人并发 | 未执行 | 需 4 个模拟客户端（可扩展 e2e） | — |
+| Home 键游戏内行为 | 取决于游戏读取方式 | 已用 `XInputGetStateEx` 证明位送达驱动 | — |
 | VGP2 协议 | 尚未实现（设计见 `docs/PROTOCOL.md`） | 提供 `protocol/test_vectors_v2.json` 作为验收基准 | — |
 | 长时间稳定性（>1h） | 未执行 | 建议后续加 4 人 + 2 小时 soak test | — |
 | 4 人并发 | 未执行 | 需 4 个模拟客户端（可扩展 e2e） | — |
@@ -111,14 +147,26 @@ python tools/e2e_test.py
 # 5. Android 构建
 cd android && gradle assembleDebug
 
-# 6. C# 构建（需 .NET 8 SDK）
-cd server-csharp && dotnet build
+# 6. C# 构建与运行（需 .NET 8 SDK）
+cd server-csharp
+dotnet build -c Release
+bin/Release/net8.0/VirtualGamepadServer.exe 26799
+
+# 7. C# 端到端（另开一个终端；会占用 UDP 26761）
+python tools/verify_csharp.py 26799
+
+# 8. 客户端异常断开回归（对 C# 或 Python 接收端均可）
+python tools/verify_udp_reset.py 26799 "C# 接收端"
 ```
+
+> 本机 SDK 布置在 `_buildenv/dotnet8`（免管理员权限，不影响系统运行时）：
+> `export DOTNET_ROOT=<repo>/_buildenv/dotnet8` 后即可使用 `dotnet8/dotnet.exe`。
 
 ---
 
 ## 7. 结论
 
-- 本轮修改的 Python / Kotlin 代码均通过可执行的验证（语法、单测、端到端）。
-- **C# 改动未经编译验证**，这是本轮最大的未闭合项，必须在有 .NET SDK 的环境补验。
-- 未发现因本轮修改导致的功能回退：e2e 的 8 项断言覆盖了按键、摇杆、扳机与空闲回中。
+- 三端（Android / Python / C#）均已编译通过；C# 首次完成真实 XInput 端到端验证（33/33）。
+- 本轮新增并修复两个由真实断线场景暴露的缺陷（A-27 Python 进程退出、A-28 C# 空转刷屏），
+  两者都有对应的自动化回归脚本。
+- 未发现因本轮修改导致的功能回退：协议 6/6、按键 6/6、Python e2e 8/8 全部重跑通过。

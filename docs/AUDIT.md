@@ -87,6 +87,42 @@
 
 ---
 
+### A-27 Python 接收端在「客户端异常断开」后整进程退出（本轮新增）
+
+- **文件**：`server-python/server.py:199-205`（原实现）
+- **原因**：排空循环只捕获 `BlockingIOError`。Windows 对已关闭的 UDP 端口发包会收到
+  ICMP 端口不可达，系统把它翻译成 `ConnectionResetError`（WSAECONNRESET 10054），
+  该异常一路抛出 `while True`，直接落到 `finally` 结束进程。
+- **触发**：手机端 App 被杀、切换 Wi-Fi/移动网络、或笔记本换网后，
+  接收端下一次向旧地址回发 `VGPP`/`VGPR` 时必现。
+- **影响**：**单人场景接收端退出；多人场景一次掉线等于把所有玩家一起踢下线**，
+  且需要人工重启，属于可稳定复现的可用性故障。
+- **修复**：在 `except BlockingIOError` 之后增加 `except ConnectionResetError`
+  （退避 5 ms 后继续）与 `except OSError` 兜底（2 ms），任何单来源瞬时错误都不再终止主循环。
+- **验证方式**：`_buildenv/verify_udp_reset.py` — 关闭客户端 socket 后等待 3.2 s
+  （覆盖 3 次周期回包触发 ICMP），再同端口重连并断言服务端仍转发按键与回包。
+  修复后 **4/4 PASS**，服务端日志无异常、进程存活。
+- **状态**：**已修复**。
+
+---
+
+### A-28 C# 接收端遇 `ConnectionReset` 空转刷屏（本轮新增）
+
+- **文件**：`server-csharp/Program.cs:160-243`（原实现）
+- **原因**：`ReceiveFrom` 抛出的 `SocketException(ConnectionReset)` 落入通用
+  `catch (SocketException)`，只打印一行就继续循环，没有任何退避；下一轮立刻再次抛出。
+  实测 2 秒内打印 20+ 行 `[错误] 接收失败：ConnectionReset`，CPU 持续空转。
+- **触发**：与 A-27 相同（手机端消失后接收端仍周期性回发）。
+- **影响**：控制台被无效日志淹没，`[状态]`/`[超时]` 等有效信息被冲掉；
+  持续空转占满一个核心，且新设备接入时更难排查。
+- **修复**：① socket 建好后调用 `IOControl(0x9800000C /*SIO_UDP_CONNRESET*/, 0)` 关闭该通知；
+  ② 单独 `catch ... when (SocketErrorCode == ConnectionReset)`，`Thread.Sleep(5)` 后退避；
+  ③ 其余 `SocketException` 日志按 1 秒限流并 `Sleep(10)`。
+- **验证方式**：同上脚本，修复后 **4/4 PASS**，日志中 `[错误]` 计数为 **0**（修复前 20+）。
+- **状态**：**已修复**。
+
+---
+
 ## 2. 中等（P1）
 
 ### A-08 Python `players` 字典跨线程访问
@@ -175,7 +211,7 @@
 | A-21 | `android/app/build.gradle` | `minifyEnabled false`，release 包未混淆/裁剪 | 待定（体积换可调试性，可接受） |
 | A-22 | 仓库根 | `一键启动.bat` 与 `START-RECEIVER.bat` 内容完全相同 | 记录（保留双入口，建议合并为调用关系） |
 | A-23 | 全项目 | 无 CI（GitHub Actions），无 lint/detekt | 待补 |
-| A-24 | `server-csharp` | 本机无 .NET SDK，`dotnet build` 无法执行 | **环境限制**，见测试报告 |
+| A-24 | `server-csharp` | 本机原先无 .NET SDK，`dotnet build` 无法执行 | **已解决**（部署 .NET 8.0.427 SDK，编译 0 警告 0 错误，见测试报告） |
 | A-25 | `game/*.py` | `look_test.py` 的 `Pad.buttons` 只映射 8 个键，无方向键/摇杆按下 | 记录（该游戏只测视角，属设计取舍） |
 | A-26 | `server-python/server.py` | 无异常报文计数与限流，畸形包静默丢弃 | 待修（低风险） |
 
@@ -188,7 +224,8 @@
 | `game/look_test.py` | 修 `just_pressed` 可变默认参数与同帧失效；`poll()` 统一前移基准 |
 | `server-python/server.py` | 严格长度校验；退出 `unplug()` 全部手柄；`players` 加锁；回调锁内只取地址 |
 | `server-csharp/GamepadProtocol.cs` | 严格长度校验；纠正"与 XInput 完全对齐"的错误注释 |
-| `server-csharp/Program.cs` | 新增 `VGPR` 震动回传（`FeedbackReceived`）+ 连接/每秒 `VGPP` 1P |
+| `server-csharp/Program.cs` | 新增 `VGPR` 震动回传（`FeedbackReceived`）+ 连接/每秒 `VGPP` 1P；关闭 `SIO_UDP_CONNRESET`、`ConnectionReset` 退避、错误日志限流（A-28） |
+| `server-python/server.py` | 捕获 `ConnectionResetError` / `OSError`，客户端异常断开不再终止进程（A-27） |
 | `android/.../UdpSender.kt` | 回包长度 `== 8` 严格校验 |
 | `一键启动.bat` / `START-RECEIVER.bat` | 进程匹配收紧为 `*server-python*server.py*`，避免误杀 |
 | `requirements.txt` / `requirements-game.txt` | 新增依赖清单 |
@@ -202,9 +239,9 @@
 
 | 项 | 原因 | 下一步 |
 | --- | --- | --- |
-| A-01 / A-02 / A-09（认证、设备身份、32 位序列号） | 需三端同时切换协议，且必须实机联调；手机当前离线、C# 无 SDK，无法验证 | 按 `docs/PROTOCOL.md` §4 实施 VGP2，接收端双栈兼容，Android 端最后切换并保留回滚开关 |
-| A-05（C# 回传） | 本机无 .NET SDK | 在有 SDK 的机器 `dotnet build` + 用同一套报文跑 e2e |
+| A-01 / A-02 / A-09（认证、设备身份、32 位序列号） | 需三端同时切换协议，且必须实机联调 | 按 `docs/PROTOCOL.md` §4 实施 VGP2，接收端双栈兼容，Android 端最后切换并保留回滚开关 |
+| A-05（C# 回传） | ~~本机无 .NET SDK~~ → **已完成** | `dotnet build` 通过；端到端 33/33 验证 VGPR/VGPP 真实可用 |
 | A-11（C# 多人） | 依赖 VGP2 的 deviceId | 与 VGP2 同批 |
-| A-13（C# 关窗口清理） | 需 `SetConsoleCtrlHandler` | 下一批 |
+| A-13（C# 关窗口清理） | 需 `SetConsoleCtrlHandler` | 已验证 `taskkill /F` 后虚拟手柄被驱动自动回收；优雅退出清理仍待补 |
 | A-19（多语言 README） | 工作量大且不影响功能 | 随功能冻结后统一翻译 |
 | A-12（前台服务） | 涉及权限与耗电取舍 | 需产品确认是否要求后台运行 |

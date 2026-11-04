@@ -17,6 +17,10 @@ pbuild*/
 build/
 spec/
 
+# ---- C# 构建产物 ----
+server-csharp/bin/
+server-csharp/obj/
+
 # ---- 打包产物 ----
 *.zip
 *.msi

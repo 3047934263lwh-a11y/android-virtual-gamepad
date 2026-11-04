@@ -203,6 +203,18 @@ def main() -> int:
                         drained += 1
                 except BlockingIOError:
                     pass
+                except ConnectionResetError:
+                    # Windows 特有：手机端进程退出或切换网络后，本机向该地址发包会
+                    # 收到 ICMP 端口不可达，系统把它上报为 WSAECONNRESET(10054)。
+                    # 这是单次事件，不是致命错误——若不捕获，主循环会直接退出，
+                    # 多人模式下等于把所有玩家一起踢下线。
+                    # 轻微退避，避免连续 ICMP 时把 CPU 打满。
+                    time.sleep(0.005)
+                except OSError as exc:
+                    # 兜底：其它瞬时网络错误同样不应终止整个接收端。
+                    if args.debug:
+                        print(f"\n[提示] 忽略瞬时接收错误: {exc}", flush=True)
+                    time.sleep(0.002)
 
             if args.debug and drained > MAX_PLAYERS * 8:
                 print(f"\n[积压] 本轮丢弃 {drained - MAX_PLAYERS} 包陈旧报文", flush=True)

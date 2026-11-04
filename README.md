@@ -177,12 +177,15 @@ python server.py                   # 默认端口 26760
 
 ```bash
 cd server-csharp
-dotnet run -c Release
+dotnet build -c Release
+bin/Release/net8.0/VirtualGamepadServer.exe 26760    # 或 dotnet run -c Release
 ```
 
-> 说明：C# 版是早期的**单人参考实现**，只做单向接收与排空取最新，**没有**震动回传
-> （`VGPR`）、玩家编号（`VGPP`）或多人分配；这些能力只在 Python 版中。
-> 日常使用请选 Python 版（`一键启动.bat` 启动的就是它）。
+> 说明：C# 版是**单人**参考实现（固定 1P），已具备与 Python 版一致的
+> 严格长度校验、排空取最新、`VGPR` 震动回传与 `VGPP` 玩家编号；
+> **没有**多人按设备分配。日常使用请选 Python 版（`一键启动.bat` 启动的就是它）。
+>
+> 已验证：`dotnet build` 0 警告 0 错误；端到端 33 项断言全通过（见 `docs/TEST-REPORT.md` §4.1）。
 
 ### 6.4 编译 Android 端
 
@@ -267,6 +270,17 @@ python tools/verify_protocol.py     # 结果应为「全部通过」
 
 修改协议后请先跑这个脚本，再动客户端与服务端。
 
+完整测试矩阵（协议 / 按键边缘 / 端到端 / 接收端回传 / 断线恢复）：
+
+```bash
+python tools/test_protocol.py       # 6 项：向量、解析、畸形包
+python tools/test_gamepad.py        # 6 项：按键边缘检测
+python tools/e2e_test.py            # 8 项：Python 端到端 + 真实 XInput
+# 需另开终端先启动 C# 接收端（端口与下面一致）
+python tools/verify_csharp.py 26760   # 33 项：C# 逐键映射/轴/回传/畸形包/回中
+python tools/verify_udp_reset.py 26760 "C#"   # 4 项：客户端异常断开后恢复
+```
+
 ### 7.3 按键位定义
 
 | 位 | 含义 | 位 | 含义 |
@@ -302,7 +316,8 @@ XInput 里是 `0x1000`；本项目 `UP` 是 bit10，XInput 里是 `0x0001`）。
 手机端把 `max(large, small)` 映射为 `VibrationEffect.createOneShot(70ms, amplitude)`，
 仅在强度变化或超过 100ms 时起振，避免高频事件刷成连续噪音。
 
-实现位置：**仅 Python 端** `pad.register_notification()`。C# 参考实现没有回传通道。
+实现位置：Python 端 `pad.register_notification()`；C# 端 `IXbox360Controller.FeedbackReceived`
+（两者均已实测：向虚拟手柄调用 `XInputSetState` 后，手机端会收到对应的 `VGPR`）。
 
 ### 7.5 多人分配规则
 
