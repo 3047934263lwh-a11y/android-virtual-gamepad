@@ -29,8 +29,10 @@ import android.view.animation.LinearInterpolator
 import android.view.animation.PathInterpolator
 import org.json.JSONObject
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.min
+import kotlin.math.sin
 
 /**
  * 全屏自绘虚拟手柄 —— Material Design 3 + Neumorphism
@@ -309,6 +311,18 @@ class GamepadView @JvmOverloads constructor(
     private var rMenu = 0f
     private val cGuide = PointF()
     private var rGuide = 0f
+    /** 摇杆样式：0 = 默认（黑曜石），1 = 金属立体（Uiverse GreyD097） */
+    var stickStyle: Int = 0
+        set(v) {
+            val nv = v.coerceIn(0, 1)
+            if (field == nv) return
+            field = nv
+            metalShaders.clear()
+            invalidate()
+        }
+
+    private val metalShaders = HashMap<Long, Shader>()
+    private val triPath = Path()
     private val tmp = RectF()
     private val tmp2 = RectF()
     private val fullRect = RectF()
@@ -825,6 +839,12 @@ class GamepadView @JvmOverloads constructor(
         val heldBit = if (key == "LS") Btn.L3 else Btn.R3
         val tapped = SystemClock.uptimeMillis() - flashAt < STICK_PULSE_MS
         val lit = active || tapped || (state.buttons and heldBit) != 0
+        val l3 = tapped || (state.buttons and heldBit) != 0
+
+        if (stickStyle == 1) {
+            drawStickMetal(c, center.x, cy, radius, knob, ca01, lit, l3)
+            return
+        }
 
         // 1) 挖进面板的摇杆井
         neumo.insetCircle(c, center.x, cy, radius, ca01, 1f)
@@ -843,6 +863,184 @@ class GamepadView @JvmOverloads constructor(
         // 4) 帽顶指向点：obsidian 单色，激活时加深
         pFill.color = fade(OBS_TEXT, ca01 * if (lit) 0.95f else 0.38f)
         c.drawCircle(kx, ky, knobRadius * 0.28f, pFill)
+    }
+
+    /**
+     * 金属立体摇杆（Uiverse GreyD097）：
+     * 平台底盘 → 凹陷碗腔 → 悬浮帽（三段堆叠投影 + 顶部白光）→ 内盘四点；
+     * 推杆偏向哪边，井外对应方向的琥珀箭头点亮（CSS .icon.active），L3/R3 点亮时四箭头同亮。
+     */
+    private fun drawStickMetal(
+        c: Canvas, cx: Float, cy: Float, radius: Float,
+        knob: PointF, a: Float, lit: Boolean, l3: Boolean,
+    ) {
+        val capR = radius * 0.51f
+        val bowlR = radius * 0.775f
+        val inR = capR * 0.835f
+        val kx = cx + knob.x
+        val ky = cy + knob.y
+
+        // 方向判定：推向哪边就点亮哪边的箭头
+        val mag = hypot(knob.x, knob.y)
+        val thr = radius * 0.20f
+        val domX = abs(knob.x) >= abs(knob.y)
+        val dirUp = mag > thr && !domX && knob.y < 0f
+        val dirDown = mag > thr && !domX && knob.y > 0f
+        val dirLeft = mag > thr && domX && knob.x < 0f
+        val dirRight = mag > thr && domX && knob.x > 0f
+
+        // 1) 平台底盘：linear-gradient(0, #f5f8fa, #9da4a8)
+        pFill.shader = metalShader((radius * 4).toLong() + 1) {
+            LinearGradient(0f, cy - radius, 0f, cy + radius,
+                0xFFF5F8FA.toInt(), 0xFF9DA4A8.toInt(), Shader.TileMode.CLAMP)
+        }
+        pFill.alpha = (255 * a).toInt()
+        c.drawCircle(cx, cy, radius, pFill)
+        pFill.shader = null
+        pFill.alpha = 255
+
+        // 2) 碗腔：#c5d1da 底 + 边缘向内的深色渐变（对应 inset 0 0 16/24/48px 黑）
+        pFill.shader = null
+        pFill.color = 0xFFC5D1DA.toInt()
+        pFill.alpha = (255 * a).toInt()
+        c.drawCircle(cx, cy, bowlR, pFill)
+        pFill.alpha = 255
+        pFill.shader = metalShader((bowlR * 4).toLong() + 2) {
+            RadialGradient(cx, cy, bowlR * 0.40f,
+                Color.TRANSPARENT, Color.argb(148, 18, 22, 26), Shader.TileMode.CLAMP)
+        }
+        pFill.alpha = (255 * a).toInt()
+        c.drawCircle(cx, cy, bowlR, pFill)
+        pFill.shader = null
+        pFill.alpha = 255
+
+        // 3) 悬浮帽：推杆偏移即位移；倾斜用沿推方向的轻微压扁近似 CSS rotateX/Y
+        val tiltX = (knob.x / (radius * 0.45f)).coerceIn(-1f, 1f)
+        val tiltY = (knob.y / (radius * 0.45f)).coerceIn(-1f, 1f)
+        val sx = 1f - 0.055f * abs(tiltX)
+        val sy = 1f - 0.055f * abs(tiltY)
+        val shU = dp(1f)
+
+        c.save()
+        c.translate(kx, ky)
+        c.scale(sx, sy)
+
+        // 堆叠投影（0 9px 50% / 0 19px 20% / 0 33px 40% 黑）与顶部白光（0 -12px 50% 白）
+        pFill.shader = null
+        pFill.color = Color.argb((102 * a).toInt(), 5, 5, 5)
+        c.drawCircle(0f, shU * 9f, capR, pFill)
+        pFill.color = Color.argb((51 * a).toInt(), 5, 5, 5)
+        c.drawCircle(0f, shU * 19f, capR * 0.96f, pFill)
+        pFill.color = Color.argb((102 * a).toInt(), 5, 5, 5)
+        c.drawCircle(0f, shU * 33f, capR * 0.88f, pFill)
+        pFill.color = Color.argb((128 * a).toInt(), 255, 255, 255)
+        c.drawCircle(0f, -shU * 12f, capR * 0.92f, pFill)
+
+        // 帽体：linear-gradient(0, #86969c, #eff1f1)
+        pFill.shader = metalShader((capR * 8).toLong() + 3) {
+            LinearGradient(0f, -capR, 0f, capR,
+                0xFFEFF1F1.toInt(), 0xFF86969C.toInt(), Shader.TileMode.CLAMP)
+        }
+        pFill.alpha = (255 * a).toInt()
+        c.drawCircle(0f, 0f, capR, pFill)
+        pFill.shader = null
+        pFill.alpha = 255
+
+        // 帽缘：顶部内白 / 底部内灰（inset 0 ±3px 60%）
+        pStroke.strokeWidth = dp(2.2f)
+        tmp.set(-capR + dp(1.6f), -capR + dp(1.6f), capR - dp(1.6f), capR - dp(1.6f))
+        pStroke.color = Color.argb((153 * a).toInt(), 255, 255, 255)
+        c.drawArc(tmp, 200f, 140f, false, pStroke)
+        pStroke.color = Color.argb((153 * a).toInt(), 89, 91, 92)
+        c.drawArc(tmp, 20f, 140f, false, pStroke)
+
+        // 内盘：linear-gradient(180deg, #adb9bf, #d4dbdd)
+        pFill.shader = metalShader((inR * 8).toLong() + 4) {
+            LinearGradient(0f, -inR, 0f, inR,
+                0xFFADB9BF.toInt(), 0xFFD4DBDD.toInt(), Shader.TileMode.CLAMP)
+        }
+        pFill.alpha = (255 * a).toInt()
+        c.drawCircle(0f, 0f, inR, pFill)
+        pFill.shader = null
+        pFill.alpha = 255
+
+        // 四点：上右下左（#e7ecef，底部小阴影）
+        val dotR = inR * 0.094f
+        val dOff = inR * 0.80f
+        val dots = floatArrayOf(0f, -dOff, dOff, 0f, 0f, dOff, -dOff, 0f)
+        var i = 0
+        while (i < dots.size) {
+            pFill.shader = null
+            pFill.color = Color.argb((70 * a).toInt(), 5, 5, 5)
+            c.drawCircle(dots[i], dots[i + 1] + dotR * 0.35f, dotR, pFill)
+            pFill.color = 0xFFE7ECEF.toInt()
+            pFill.alpha = (255 * a).toInt()
+            c.drawCircle(dots[i], dots[i + 1], dotR, pFill)
+            pFill.alpha = 255
+            i += 2
+        }
+        c.restore()
+
+        // L3/R3 点亮（按下/双击脉冲）：四点短暂变琥珀
+        if (l3) {
+            pFill.shader = null
+            pFill.color = 0xFFE3A560.toInt()
+            pFill.alpha = (255 * a * 0.85f).toInt()
+            c.save()
+            c.translate(kx, ky)
+            c.scale(sx, sy)
+            var k = 0
+            while (k < dots.size) {
+                c.drawCircle(dots[k], dots[k + 1], dotR, pFill)
+                k += 2
+            }
+            c.restore()
+            pFill.alpha = 255
+        }
+
+        // 4) 井外方向箭头：默认 #b4b9bd，激活 #e3a560 + 双层光晕
+        val iconD = radius + radius * 0.22f
+        val iconR = radius * 0.13f
+        val dirs = booleanArrayOf(dirUp, dirRight, dirDown, dirLeft)
+        for (k in 0 until 4) {
+            val ang = -90f + k * 90f
+            val rad = Math.toRadians(ang.toDouble())
+            val ix = cx + iconD * cos(rad).toFloat()
+            val iy = cy + iconD * sin(rad).toFloat()
+            val on = dirs[k] || l3
+
+            triPath.reset()
+            triPath.moveTo(0f, -iconR)
+            triPath.lineTo(iconR * 0.85f, iconR * 0.62f)
+            triPath.lineTo(-iconR * 0.85f, iconR * 0.62f)
+            triPath.close()
+
+            c.save()
+            c.translate(ix, iy)
+            c.rotate(ang + 90f)
+            pFill.shader = null
+            if (on) {
+                pFill.color = Color.argb((52 * a).toInt(), 0xE3, 0xA5, 0x60)
+                c.save(); c.scale(1.45f, 1.45f); c.drawPath(triPath, pFill); c.restore()
+                pFill.color = Color.argb((26 * a).toInt(), 0xE3, 0xA5, 0x60)
+                c.save(); c.scale(1.85f, 1.85f); c.drawPath(triPath, pFill); c.restore()
+                pFill.color = 0xFFE3A560.toInt()
+            } else {
+                pFill.color = 0xFFB4B9BD.toInt()
+            }
+            pFill.alpha = (255 * a).toInt()
+            c.drawPath(triPath, pFill)
+            pFill.alpha = 255
+            c.restore()
+        }
+    }
+
+    private fun metalShader(k: Long, make: () -> Shader): Shader {
+        metalShaders[k]?.let { return it }
+        val sh = make()
+        if (metalShaders.size > 120) metalShaders.clear()
+        metalShaders[k] = sh
+        return sh
     }
 
     // ---- 方向键：凸起底盘 + 四条独立凸起臂 ----

@@ -349,6 +349,7 @@ class MainActivity : AppCompatActivity() {
         gamepadView.uiScale = prefs.getFloat("ui_scale", 1f)
         gamepadView.stickScale = prefs.getFloat("stick_scale", 1f)
         gamepadView.buttonScale = prefs.getFloat("button_scale", 1f)
+        gamepadView.stickStyle = prefs.getInt("stick_style", 0)
         gamepadView.loadLayout(prefs.getString("layout_v1", null))
         gamepadView.loadHidden(prefs.getString("hidden_keys", null))
         gamepadView.hapticsEnabled = hapticsOn
@@ -801,6 +802,14 @@ class MainActivity : AppCompatActivity() {
         container.addView(hideWrapper)
 
         // 右摇杆控制（陀螺仪相关）放在最前，展开即可见
+        container.addView(label("摇杆样式"))
+        container.addView(
+            toggle("金属立体摇杆（Uiverse 风格）", gamepadView.stickStyle == 1) { on ->
+                gamepadView.stickStyle = if (on) 1 else 0
+                prefs.edit().putInt("stick_style", gamepadView.stickStyle).apply()
+            }
+        )
+
         container.addView(label("右摇杆控制"))
         val gyroSw = toggle("陀螺仪瞄准（转手机 = 转视角）", wantGyro) {
             wantGyro = it
