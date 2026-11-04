@@ -557,6 +557,8 @@ class MainActivity : AppCompatActivity() {
         // 布局编辑入口放在最上方，展开即可见，避免被滑杆挤出屏幕
         container.addView(
             MaterialButton(ctx, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                elevation = 0f
+                stateListAnimator = null
                 text = "自定义按键布局（逐键拖动 / 调大小）"
                 textSize = 13f
                 isAllCaps = false
@@ -764,6 +766,8 @@ class MainActivity : AppCompatActivity() {
                 ctx, null,
                 com.google.android.material.R.attr.materialButtonOutlinedStyle
             ).apply {
+                elevation = 0f
+                stateListAnimator = null
                 text = "全部显示"
                 textSize = 13f
                 isAllCaps = false
@@ -961,6 +965,8 @@ class MainActivity : AppCompatActivity() {
 
         container.addView(
             MaterialButton(ctx, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                elevation = 0f
+                stateListAnimator = null
                 text = "恢复默认"
                 textSize = 13f
                 isAllCaps = false
