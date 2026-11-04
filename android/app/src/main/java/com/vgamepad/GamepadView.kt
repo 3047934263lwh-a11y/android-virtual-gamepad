@@ -394,6 +394,7 @@ class GamepadView @JvmOverloads constructor(
             if (held) { i++; continue }
             // 幽灵按压：该 zone 已无任何手指 → 释放
             zoneReleaseAt.put(zone, SystemClock.uptimeMillis())
+            ensurePressTick()
             zoneDownAt.removeAt(i)
             when (zone) {
                 Z_LSTICK -> {
@@ -425,6 +426,41 @@ class GamepadView @JvmOverloads constructor(
         val rel = zoneReleaseAt.get(zone, 0L)
         if (rel > 0L) return clamp(1f - (now - rel) / RELEASE_SETTLE_MS, 0f, 1f)
         return 0f
+    }
+
+    /**
+     * 按压过渡期的自愈重绘循环。pressP() 是纯时间函数（下沉 90ms / 弹回 130ms），
+     * 松手后必须有连续重绘才能把"弹回"画出来——背景动态效果关闭时没有任何东西
+     * 在驱动重绘，画面就永远停在最后一帧（看起来像抬起后按键卡在按下动画里，
+     * 直到碰下一个键才触发重绘"突然弹起"）。此循环只在有键处于按下/回弹窗口内
+     * 时以 60fps 重绘，过渡结束自动停止；postDelayed 自愈式不怕帧链断。
+     */
+    private var pressTickRunning = false
+    private val pressTick = object : Runnable {
+        override fun run() {
+            val now = SystemClock.uptimeMillis()
+            var pending = zoneDownAt.size() > 0
+            if (!pending) {
+                for (i in 0 until zoneReleaseAt.size()) {
+                    if (now - zoneReleaseAt.valueAt(i) < RELEASE_SETTLE_MS.toLong()) {
+                        pending = true
+                        break
+                    }
+                }
+            }
+            if (!pending || !isAttachedToWindow) {
+                pressTickRunning = false
+                return
+            }
+            invalidate()
+            postDelayed(this, 16L)
+        }
+    }
+
+    private fun ensurePressTick() {
+        if (pressTickRunning) return
+        pressTickRunning = true
+        postDelayed(pressTick, 16L)
     }
 
     // ---------- 触感反馈 ----------
@@ -1624,6 +1660,7 @@ class GamepadView @JvmOverloads constructor(
             invalidate()
             return true
         }
+        ensurePressTick()
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
