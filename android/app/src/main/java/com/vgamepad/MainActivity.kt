@@ -42,6 +42,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.google.android.material.checkbox.MaterialCheckBox
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.slider.Slider
+import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -1507,6 +1508,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 临界阻尼弹簧位移曲线：x(t) = 1 - (1 + ωt)·e^(-ωt)。
+     * 等价于 Compose spring(dampingRatio = 1f) / iOS UISpringTiming(damping=1)——
+     * 开源生态里横展开/收起动画的标准运动模型：初速为零平滑启动、指数减速、
+     * 无过冲无回弹，收尾比任何贝塞尔曲线都顺。
+     */
+    private fun springInterpolator(omega: Float) = android.animation.TimeInterpolator {
+        val t = it * omega
+        1f - (1f + t) * exp(-t)
+    }
+
+    /** 弹簧刚度：数值越小尾越长。展开稍绵长、收起稍干脆，均保证在时长内完全收敛。 */
+    private val OMEGA_EXPAND = 11f
+    private val OMEGA_COLLAPSE = 13.5f
+
     private fun expandBar() {
         if (barExpanded) return
         barExpanded = true
@@ -1514,10 +1530,11 @@ class MainActivity : AppCompatActivity() {
         setBarContentVisible(true)
         showBlur()
         val from = if (barCurrentWidth > 0) barCurrentWidth else barCollapsedWidth
-        // Material 3 emphasized 曲线（0.2,0,0,1）：起步柔、收尾更柔，320ms 从左向右展开
+        // 临界阻尼弹簧（对齐 Compose AnimatedVisibility NoBouncy spring /
+        // iOS UISpringTimingAnimation damping=1）：物理减速、无过冲、收尾极顺
         barAnim = ValueAnimator.ofInt(from, barFullWidth).apply {
-            duration = 320L
-            interpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
+            duration = 420L
+            interpolator = springInterpolator(OMEGA_EXPAND)
             addUpdateListener { applyBarWidth(it.animatedValue as Int) }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
@@ -1544,8 +1561,8 @@ class MainActivity : AppCompatActivity() {
                 .alpha(1f)
                 .translationX(0f)
                 .setStartDelay(30L + (i - 1) * 22L)
-                .setDuration(260L)
-                .setInterpolator(PathInterpolator(0.2f, 0f, 0f, 1f))
+                .setDuration(300L)
+                .setInterpolator(springInterpolator(OMEGA_EXPAND))
                 .start()
         }
     }
@@ -1559,8 +1576,8 @@ class MainActivity : AppCompatActivity() {
             c.animate()
                 .alpha(0f)
                 .translationX(-slide)
-                .setDuration(140L)
-                .setInterpolator(PathInterpolator(0.3f, 0f, 1f, 1f))
+                .setDuration(150L)
+                .setInterpolator(springInterpolator(OMEGA_COLLAPSE))
                 .start()
         }
     }
@@ -1574,10 +1591,10 @@ class MainActivity : AppCompatActivity() {
         animateContentOut()
         barCollapsedWidth = measureCollapsedWidth()
         val from = if (barCurrentWidth > 0) barCurrentWidth else barFullWidth
-        // Material 3 emphasized accelerate（0.3,0,1,1）：起步柔，加速收回，300ms
+        // 同款临界阻尼弹簧（刚度更高，收回更干脆），340ms
         barAnim = ValueAnimator.ofInt(from, barCollapsedWidth).apply {
-            duration = 300L
-            interpolator = PathInterpolator(0.3f, 0f, 1f, 1f)
+            duration = 340L
+            interpolator = springInterpolator(OMEGA_COLLAPSE)
             addUpdateListener { applyBarWidth(it.animatedValue as Int) }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
