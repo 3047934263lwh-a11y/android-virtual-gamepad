@@ -171,12 +171,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 必须在 super.onCreate 之前落定夜间模式，AppCompat 才会按该值创建 delegate，
+        // 否则会在启动后再触发一次 Activity 重建（闪一下）。
+        VgTheme.applyNightMode(VgTheme.mode(this))
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_main)
         applyImmersive()
 
         gamepadView = findViewById(R.id.gamepadView)
+        gamepadView.applyTheme(VgTheme.resolve(this))
         ipInput = findViewById(R.id.ipInput)
         portInput = findViewById(R.id.portInput)
         connectBtn = findViewById(R.id.connectBtn)
@@ -360,6 +364,9 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit().putString("ip", keepIp).putInt("port", keepPort).apply()
 
                 loadPrefsIntoState()
+                // 外观也属于设置项：跟随系统 + 默认主题色
+                VgTheme.applyNightMode(VgTheme.mode(this))
+                gamepadView.applyTheme(VgTheme.resolve(this))
                 applyGyroState()
                 gamepadView.releaseAll()
                 ipInput.setText(keepIp)
@@ -425,6 +432,127 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putFloat(key, value).apply()
         }
 
+
+        // ---- 外观：Material 3 主题模式 + 主题色（Material You 动态取色 / 低饱和预设） ----
+        val theme = VgTheme.resolve(this)
+        container.addView(label("外观"))
+        val modeRow = android.widget.RadioGroup(ctx).apply {
+            orientation = android.widget.RadioGroup.HORIZONTAL
+        }
+        val currentMode = VgTheme.mode(this)
+        listOf(
+            "跟随系统" to VgTheme.Mode.SYSTEM,
+            "浅色" to VgTheme.Mode.LIGHT,
+            "深色" to VgTheme.Mode.DARK,
+        ).forEachIndexed { i, pair ->
+            val rb = com.google.android.material.radiobutton.MaterialRadioButton(ctx).apply {
+                id = 3000 + i                 // 必须唯一，否则同组互斥失效
+                text = pair.first
+                textSize = 13f
+                isChecked = currentMode == pair.second
+                setTextColor(ContextCompat.getColor(ctx, R.color.text_primary))
+                layoutParams = LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                )
+                setOnCheckedChangeListener { _, checked ->
+                    if (!checked) return@setOnCheckedChangeListener
+                    if (VgTheme.mode(this@MainActivity) == pair.second) return@setOnCheckedChangeListener
+                    // 切换夜间模式需要重建 Activity，AppCompat 会自动完成
+                    VgTheme.setMode(this@MainActivity, pair.second)
+                }
+            }
+            modeRow.addView(rb)
+        }
+        container.addView(modeRow)
+
+        container.addView(label("主题色"))
+        val swatchRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(0, (6 * d).toInt(), 0, (4 * d).toInt())
+        }
+        var currentAccent = VgTheme.accentIndex(this)
+        val dotViews = ArrayList<View>()
+        val dotIndex = ArrayList<Int>()
+        val dotFill = ArrayList<Int>()
+        val dotGrad = ArrayList<IntArray?>()
+
+        fun swatchDrawable(
+            index: Int, fill: Int, gradient: IntArray?, c: VgColors,
+        ): GradientDrawable = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            if (gradient != null) {
+                colors = gradient
+                gradientType = GradientDrawable.LINEAR_GRADIENT
+                orientation = GradientDrawable.Orientation.TL_BR
+            } else {
+                setColor(fill)
+            }
+            // 选中：主题墨色描边环；未选中：极淡描边保证浅色底上可见
+            setStroke(
+                (2.5f * d).toInt(),
+                if (index == currentAccent) c.accentInk else c.withAlpha(c.outline, 0.9f)
+            )
+        }
+
+        fun restyleSwatches(c: VgColors) {
+            dotViews.forEachIndexed { i, v ->
+                v.background = swatchDrawable(dotIndex[i], dotFill[i], dotGrad[i], c)
+            }
+        }
+
+        val accentLabel = TextView(ctx).apply {
+            text = "当前主题色：" + VgTheme.accentName(currentAccent)
+            textSize = 11f
+            setTextColor(ContextCompat.getColor(ctx, R.color.text_secondary))
+            setPadding(0, 0, 0, (4 * d).toInt())
+        }
+
+        fun addSwatch(index: Int, fill: Int, gradient: IntArray?) {
+            val size = (34 * d).toInt()
+            val holder = android.widget.FrameLayout(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                    rightMargin = (10 * d).toInt()
+                }
+                isClickable = true
+                isFocusable = true
+                contentDescription = VgTheme.accentName(index)
+                setOnClickListener {
+                    if (currentAccent == index) return@setOnClickListener
+                    currentAccent = index
+                    VgTheme.setAccentIndex(this@MainActivity, index)
+                    val c = VgTheme.resolve(this@MainActivity)
+                    // 背景做渐变过渡；控件色板同步切换
+                    gamepadView.applyTheme(c, animated = true)
+                    accentLabel.text = "当前主题色：" + VgTheme.accentName(index)
+                    restyleSwatches(c)
+                    // 收起面板，让整屏背景的渐变过渡完整可见
+                    hideSettings()
+                }
+            }
+            val dot = View(ctx).apply {
+                background = swatchDrawable(index, fill, gradient, theme)
+                layoutParams = android.widget.FrameLayout.LayoutParams(size, size)
+            }
+            holder.addView(dot)
+            dotViews.add(dot)
+            dotIndex.add(index)
+            dotFill.add(fill)
+            dotGrad.add(gradient)
+            swatchRow.addView(holder)
+        }
+        addSwatch(
+            VgTheme.ACCENT_DYNAMIC, 0,
+            intArrayOf(
+                0xFF9DB0D6.toInt(), 0xFFA2C9B2.toInt(),
+                0xFFD9AC91.toInt(), 0xFFB9A6D2.toInt()
+            )
+        )
+        VgTheme.accents.forEachIndexed { i, a ->
+            addSwatch(i + 1, if (theme.dark) a.dark else a.light, null)
+        }
+        container.addView(swatchRow)
+        container.addView(accentLabel)
 
         // 布局编辑入口放在最上方，展开即可见，避免被滑杆挤出屏幕
         container.addView(
@@ -875,12 +1003,12 @@ class MainActivity : AppCompatActivity() {
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT
             )
-            setBackgroundColor(0xCC05070A.toInt())
+            setBackgroundColor(ContextCompat.getColor(ctx, R.color.scrim))
             isClickable = true            // 吞掉面板外的点击
             setOnClickListener { hideSettings() }
         }
         val card = android.widget.FrameLayout(ctx).apply {
-            background = ContextCompat.getDrawable(ctx, R.drawable.bg_bar)
+            background = ContextCompat.getDrawable(ctx, R.drawable.bg_panel)
             clipToOutline = false
             isClickable = true
             setOnClickListener { }        // 面板内点击不穿透

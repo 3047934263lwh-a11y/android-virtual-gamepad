@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 设置面板：抬升的表面，浅色主题靠白色描边、深色主题靠更亮的描边 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/panel_bg" />
+    <corners android:radius="26dp" />
+    <stroke
+        android:width="1dp"
+        android:color="@color/panel_stroke" />
+</shape>

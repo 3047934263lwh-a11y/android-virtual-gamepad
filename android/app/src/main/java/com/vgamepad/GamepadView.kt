@@ -32,19 +32,21 @@ import kotlin.math.hypot
 import kotlin.math.min
 
 /**
- * 全屏自绘虚拟手柄 —— Ultra-Premium Dark Glassmorphism
+ * 全屏自绘虚拟手柄 —— Material Design 3 + Neumorphism
  *
- * 视觉体系：Smoked Obsidian Glass（烟熏黑曜石玻璃）+
- *           Layered Frosted Glass（多层磨砂玻璃）+ Precision Industrial Design。
+ * 设计分层（严格分离，互不影响输入）：
+ *  - 令牌层 [VgTheme]：低饱和配色、浅/深主题、自定义主题色、MD3 语义角色
+ *  - 渲染层 [Neumo]：双向柔和阴影，凸起/凹陷两种物理状态，着色器与阴影位图全部缓存
+ *  - 几何层 [computeLayout]：只算坐标与半径，可被缩放/拖拽/隐藏
+ *  - 输入层 [onTouchEvent] / [bindPointer]：直接读写 [GamepadState]，与视觉零耦合
  *
- *  - 背景：黑曜石深空渐变 + 极淡冷色环境光斑（供玻璃折射采样）
- *  - 每个控件 = 独立悬浮玻璃体：
- *      外层烟熏玻璃（裁剪采样模糊背景 + 烟熏染色）→ 间隙（透出模糊背景）
- *      → 内芯层（第二层磨砂玻璃 + 钛金属细节线）→ 边缘折射高光/暗折
- *      → 低对比银灰描边 → 柔和悬浮投影 → 激活冷色辉光
- *  - 按下：内芯下沉 2dp、染色加深、辉光微亮（长按环已按需求移除）
- *  - 松开：130ms 弹回。全部动画仅作用于绘制层。
- *  - 逐键自定义：位置、大小、透明度（编辑滑杆切换"大小/透明度"）、显隐（设置面板）。
+ * 视觉要点：
+ *  - 背景与控件同色系，立体感由左上高光 + 右下投影塑造，避免高对比"塑料感"
+ *  - ABXY 保留语义色字母，其余控件为中性表面色 + 强调色点缀
+ *  - 按下 = 下沉 1.6dp + 内凹阴影 + 边缘收暗，松开回弹；动画只改绘制，不阻塞输入
+ *  - 摇杆 = 挖入式摇杆井 + 悬浮摇杆帽，帽顶指示点随激活态点亮
+ *  - LT/RT = 凹陷行程槽，强调色自下而上填充，带 25/50/75 刻度
+ *  - 逐键自定义：位置、大小、透明度、显隐，全部只影响绘制与命中范围
  */
 class GamepadView @JvmOverloads constructor(
     context: Context,
@@ -53,6 +55,49 @@ class GamepadView @JvmOverloads constructor(
 ) : View(context, attrs, defStyleAttr) {
 
     val state = GamepadState()
+
+    /** 当前主题（由 Activity 注入）。默认按系统/偏好解析，避免首帧闪白。 */
+    private var themeColors: VgColors = VgTheme.resolve(context)
+
+    /** 新拟态渲染器：只负责画，不碰任何输入状态 */
+    private val neumo = Neumo(resources.displayMetrics.density)
+
+    private val col: VgColors get() = themeColors
+
+    init {
+        neumo.setColors(themeColors)
+    }
+
+    private var themeAnim: ValueAnimator? = null
+
+    /**
+     * 应用新主题：只重建着色器并重绘，不影响触控与通信。
+     * [animated] = true 时背景色从旧配色渐变到新配色（约 480ms，MD3 标准缓动），
+     * 控件色板立即生效——避免整屏"啪"地跳色。
+     */
+    fun applyTheme(c: VgColors, animated: Boolean = false) {
+        val old = themeColors
+        if (old == c) return
+        themeColors = c
+        neumo.setColors(c)
+        themeAnim?.cancel()
+        themeAnim = null
+        if (animated) {
+            neumo.beginBackgroundTransition(old)
+            themeAnim = ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = 480L
+                interpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
+                addUpdateListener {
+                    neumo.setBackgroundProgress(it.animatedValue as Float)
+                    invalidate()
+                }
+                start()
+            }
+        } else {
+            neumo.endBackgroundTransition()
+            invalidate()
+        }
+    }
 
     private companion object {
         const val Z_NONE = -1
@@ -73,35 +118,6 @@ class GamepadView @JvmOverloads constructor(
         const val Z_MENU = 34            // ☰ 菜单键（映射 Btn.START，游戏里的 Menu）
         const val Z_LT = 40
         const val Z_RT = 41
-
-        // ---- 黑曜石 / 烟熏玻璃色板 ----
-        val C_BG0 = 0xFF0C0E12.toInt()         // 黑曜石上端
-        val C_BG1 = 0xFF07080A.toInt()         // 黑曜石下端
-        val C_SMOKE = 0x40101418.toInt()       // 烟熏石墨染色 25%
-        val C_CORE = 0x30202833.toInt()        // 内芯层染色（磨砂 frost，略亮）
-        val C_CORE_ON = 0x47182028.toInt()     // 按下内芯
-        val C_SILVER = 0x66A8B4C4.toInt()      // 银灰描边 40%
-        val C_SILVER_ON = 0x8CA8B4C4.toInt()   // 按下银边 55%
-        val C_SILVER_DIM = 0x26A8B4C4.toInt()  // 内芯银线 15%
-        val C_TITANIUM = 0x2E808896.toInt()    // 钛金属细节线 18%
-        val C_SHEEN = 0x14FFFFFF.toInt()       // 折射高光带 8% 白
-        val C_REFRACT = 0x3DFFFFFF.toInt()     // 边缘折射 24% 白
-        val C_DARKFOLD = 0x30000000.toInt()    // 边缘暗折 19% 黑
-        val C_INSHADOW = 0x4D000000.toInt()    // 内阴影 30% 黑
-        val C_AO = 0x5E000000.toInt()          // 悬浮投影 37% 黑
-        val C_WELL = 0x5510141A.toInt()        // 摇杆井烟熏底 33%
-        val C_GLACIER = 0xFF6FA8DC.toInt()     // 冰川蓝（强调）
-        val C_GLACIER_GLOW = 0x1F6FA8DC.toInt()// 激活冷辉光 12%
-        val C_GLACIER_FILL = 0x406FA8DC.toInt()// 扳机行程 25%
-        val C_A = 0xFF5CBF60.toInt()           // ABXY 字母（高对比版）
-        val C_B = 0xFFE86A62.toInt()
-        val C_X = 0xFF5C9BE8.toInt()
-        val C_Y = 0xFFE5C05A.toInt()
-        val C_DARK = 0xFF0B0D0F.toInt()
-        val C_ACCENT = 0xFF6FA8DC.toInt()      // 编辑选中色（同冰川蓝）
-        val C_TXT = 0xFFD8E2EC.toInt()         // 常规文字（高对比银白）
-        val C_TXT_ON = 0xFFF2F7FB.toInt()      // 按下文字
-        val C_TXT_DIM = 0xFF8794A3.toInt()     // 次要文字
 
         const val DEADZONE = 0.06f
         const val STICK_MAX = 32767f
@@ -239,13 +255,6 @@ class GamepadView @JvmOverloads constructor(
         style = Paint.Style.STROKE
         strokeWidth = dp(1.4f)
     }
-    private val pShadow = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val pBitmap = Paint(Paint.FILTER_BITMAP_FLAG)
-    private val pGlow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        color = C_GLACIER_GLOW
-        strokeWidth = dp(6f)
-    }
     private val pEdit = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = dp(1.2f)
@@ -260,15 +269,11 @@ class GamepadView @JvmOverloads constructor(
         typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
     }
 
-    private val glassPath = Path()
     private val pointers = SparseIntArray()
 
     /** 按压状态跟踪：zone -> 按下/松开时刻 */
     private val zoneDownAt = SparseIntArray()
     private val zoneReleaseAt = SparseIntArray()
-
-    // ---- 模糊背景（黑曜石环境光，供玻璃折射采样）----
-    private var backdropBlur: Bitmap? = null
 
     private fun dp(v: Float): Float = v * resources.displayMetrics.density
 
@@ -546,13 +551,15 @@ class GamepadView @JvmOverloads constructor(
         lsKnob.set(0f, 0f)
         rsKnob.set(0f, 0f)
         computeLayout()
-        buildBackdrop(w, h)
         startIntro()
     }
 
     override fun onDetachedFromWindow() {
         introAnim?.cancel()
         introAnim = null
+        themeAnim?.cancel()
+        themeAnim = null
+        neumo.dispose()
         super.onDetachedFromWindow()
     }
 
@@ -682,216 +689,22 @@ class GamepadView @JvmOverloads constructor(
         return a01 to ty
     }
 
-    // ---------- 黑曜石环境背景（供玻璃折射采样） ----------
+    // ---------- 绘制（Material 3 语义 + Neumorphism 质感） ----------
 
-    private fun buildBackdrop(w: Int, h: Int) {
-        backdropBlur?.recycle()
-        backdropBlur = null
-        if (w <= 0 || h <= 0) return
-
-        val sw = (w / 4f).toInt().coerceAtLeast(16)
-        val sh = (h / 4f).toInt().coerceAtLeast(16)
-        val base = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888)
-        val bc = Canvas(base)
-        bc.drawRect(
-            0f, 0f, sw.toFloat(), sh.toFloat(),
-            Paint().apply {
-                shader = LinearGradient(
-                    0f, 0f, sw * 0.25f, sh.toFloat(),
-                    0xFF0E1116.toInt(), 0xFF07080A.toInt(), Shader.TileMode.CLAMP
-                )
-            }
-        )
-        // 极淡冷色环境光斑（玻璃折射的色彩来源，克制、低饱和）
-        fun glow(cx: Float, cy: Float, rad: Float, color: Int) {
-            val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                shader = RadialGradient(
-                    cx, cy, rad, color, Color.TRANSPARENT, Shader.TileMode.CLAMP
-                )
-            }
-            bc.drawCircle(cx, cy, rad, p)
-        }
-        glow(sw * 0.18f, sh * 0.12f, sw * 0.42f, 0x331B3A5C)   // 冰川蓝（极淡）
-        glow(sw * 0.85f, sh * 0.90f, sw * 0.55f, 0x2A12304A)   // 冷青蓝
-        glow(sw * 0.60f, sh * 0.04f, sw * 0.24f, 0x14202A38)   // 钛灰
-
-        val s1 = Bitmap.createScaledBitmap(
-            base, (sw / 3f).toInt().coerceAtLeast(4), (sh / 3f).toInt().coerceAtLeast(4), true
-        )
-        val s2 = Bitmap.createScaledBitmap(
-            s1, (sw / 8f).toInt().coerceAtLeast(2), (sh / 8f).toInt().coerceAtLeast(2), true
-        )
-        if (s1 !== base) s1.recycle()
-        base.recycle()
-        backdropBlur = s2
-    }
-
-    // ---------- 多层烟熏玻璃渲染 ----------
-
-    /**
-     * 多层烟熏玻璃圆形：
-     *   悬浮投影 → 外层烟熏玻璃（裁剪采样模糊背景 + 烟熏染色 + 上缘内阴影）
-     *   → 间隙（透出模糊背景）→ 内芯层（第二层磨砂玻璃 + 钛金属细节线）
-     *   → 边缘折射高光/暗折 + 银灰描边 → 激活冷辉光
-     */
-    private fun layeredGlassCircle(
-        c: Canvas, cx: Float, cy: Float, radius: Float,
-        pressP: Float, alpha01: Float, active: Boolean
-    ) {
-        val pa = (255f * alpha01).toInt()
-        val sink = pressP * dp(GLASS_SINK_DP)
-        val cyS = cy + sink * 0.6f
-
-        // 悬浮投影（柔和环境遮蔽，按下贴近地面）
-        pShadow.color = fade(C_AO, alpha01 * (1f - pressP * 0.4f))
-        c.drawCircle(cx, cyS + dp(3f), radius + dp(0.5f), pShadow)
-
-        // ---- 外层烟熏玻璃 ----
-        glassPath.reset()
-        glassPath.addCircle(cx, cyS, radius, Path.Direction.CW)
-        c.save()
-        c.clipPath(glassPath)
-        pBitmap.alpha = (205f * alpha01).toInt()
-        backdropBlur?.let {
-            c.drawBitmap(it, null, tmp2.apply { set(0f, 0f, width.toFloat(), height.toFloat()) }, pBitmap)
-        }
-        c.restore()
-        pFill.color = fade(C_SMOKE, alpha01)
-        c.drawPath(glassPath, pFill)
-        // 外层上缘内阴影
-        pStroke.color = fade(C_INSHADOW, alpha01 * 0.85f)
-        pStroke.strokeWidth = dp(2f)
-        tmp.set(cx - radius + dp(1f), cyS - radius + dp(1f),
-                cx + radius - dp(1f), cyS)
-        c.drawArc(tmp, 180f, 180f, false, pStroke)
-        // 外缘：低对比银灰
-        pStroke.color = fade(C_SILVER, alpha01)
-        pStroke.strokeWidth = dp(1f)
-        c.drawPath(glassPath, pStroke)
-
-        // ---- 间隙（透出模糊背景）+ 内芯层 ----
-        val coreR = radius - dp(3.5f)
-        glassPath.reset()
-        glassPath.addCircle(cx, cyS, coreR, Path.Direction.CW)
-        c.save()
-        c.clipPath(glassPath)
-        pBitmap.alpha = (110f * alpha01).toInt()
-        backdropBlur?.let {
-            c.drawBitmap(it, null, tmp2.apply { set(0f, 0f, width.toFloat(), height.toFloat()) }, pBitmap)
-        }
-        c.restore()
-        pFill.color = fade(if (pressP > 0.5f) C_CORE_ON else C_CORE, alpha01)
-        c.drawPath(glassPath, pFill)
-        // 内芯钛金属细节环
-        pStroke.color = fade(C_TITANIUM, alpha01)
-        pStroke.strokeWidth = dp(0.7f)
-        c.drawCircle(cx, cyS, coreR - dp(0.6f), pStroke)
-
-        // ---- 边缘系统：折射高光（左上弧）+ 暗折（右下弧）----
-        pStroke.color = fade(C_REFRACT, alpha01)
-        pStroke.strokeWidth = dp(1.4f)
-        tmp.set(cx - radius + dp(1.5f), cyS - radius + dp(1.5f),
-                cx + radius - dp(1.5f), cyS + radius - dp(1.5f))
-        c.drawArc(tmp, 150f, 120f, false, pStroke)      // 左上折射
-        pStroke.color = fade(C_DARKFOLD, alpha01)
-        c.drawArc(tmp, -20f, 100f, false, pStroke)      // 右下暗折
-
-        // ---- 顶部折射高光带 ----
-        pFill.color = fade(C_SHEEN, alpha01)
-        c.drawCircle(cx, cyS - radius * 0.26f, radius * 0.74f, pFill)
-
-        // ---- 状态：激活冷辉光（长按环已按需求移除） ----
-        if (active) {
-            pGlow.color = fade(C_GLACIER_GLOW, alpha01)
-            c.drawCircle(cx, cyS, radius + dp(2.5f), pGlow)
-        }
-        pStroke.strokeWidth = dp(1.4f)
-    }
-
-    /** 多层烟熏玻璃圆角矩形变体。 */
-    private fun layeredGlassRect(
-        c: Canvas, r: RectF, rad: Float,
-        pressP: Float, alpha01: Float, active: Boolean
-    ) {
-        val pa = (255f * alpha01).toInt()
-        val sink = pressP * dp(GLASS_SINK_DP)
-        val rr = RectF(r)
-        rr.offset(0f, sink * 0.6f)
-
-        pShadow.color = fade(C_AO, alpha01 * (1f - pressP * 0.4f))
-        tmp.set(rr.left + dp(1f), rr.top + dp(2f), rr.right - dp(1f), rr.bottom + dp(3.5f))
-        c.drawRoundRect(tmp, rad, rad, pShadow)
-
-        // 外层烟熏玻璃
-        glassPath.reset()
-        glassPath.addRoundRect(rr, rad, rad, Path.Direction.CW)
-        c.save()
-        c.clipPath(glassPath)
-        pBitmap.alpha = (205f * alpha01).toInt()
-        backdropBlur?.let {
-            c.drawBitmap(it, null, tmp2.apply { set(0f, 0f, width.toFloat(), height.toFloat()) }, pBitmap)
-        }
-        c.restore()
-        pFill.color = fade(C_SMOKE, alpha01)
-        c.drawPath(glassPath, pFill)
-        pStroke.color = fade(C_INSHADOW, alpha01 * 0.85f)
-        pStroke.strokeWidth = dp(2f)
-        tmp.set(rr.left + dp(1f), rr.top + dp(1f), rr.right - dp(1f), rr.centerY())
-        c.drawRoundRect(tmp, rad, rad, pStroke)
-        pStroke.color = fade(C_SILVER, alpha01)
-        pStroke.strokeWidth = dp(1f)
-        c.drawPath(glassPath, pStroke)
-
-        // 内芯层（内缩 3.5dp）
-        val coreR = rad - dp(3f)
-        tmp.set(rr.left + dp(3.5f), rr.top + dp(3.5f), rr.right - dp(3.5f), rr.bottom - dp(3.5f))
-        glassPath.reset()
-        glassPath.addRoundRect(tmp, coreR, coreR, Path.Direction.CW)
-        c.save()
-        c.clipPath(glassPath)
-        pBitmap.alpha = (110f * alpha01).toInt()
-        backdropBlur?.let {
-            c.drawBitmap(it, null, tmp2.apply { set(0f, 0f, width.toFloat(), height.toFloat()) }, pBitmap)
-        }
-        c.restore()
-        pFill.color = fade(if (pressP > 0.5f) C_CORE_ON else C_CORE, alpha01)
-        c.drawPath(glassPath, pFill)
-        pStroke.color = fade(C_TITANIUM, alpha01)
-        pStroke.strokeWidth = dp(0.7f)
-        c.drawPath(glassPath, pStroke)
-
-        // 边缘折射/暗折
-        pStroke.color = fade(C_REFRACT, alpha01)
-        pStroke.strokeWidth = dp(1.4f)
-        tmp.set(rr.left + dp(1.5f), rr.top + dp(1.5f), rr.right - dp(1.5f), rr.bottom - dp(1.5f))
-        c.drawArc(tmp, 150f, 120f, false, pStroke)
-        pStroke.color = fade(C_DARKFOLD, alpha01)
-        c.drawArc(tmp, -20f, 100f, false, pStroke)
-
-        // 顶部折射高光带
-        pFill.color = fade(C_SHEEN, alpha01)
-        tmp.set(rr.left + rr.width() * 0.05f, rr.top + rr.height() * 0.08f,
-                rr.right - rr.width() * 0.05f, rr.top + rr.height() * 0.40f)
-        c.drawRoundRect(tmp, coreR * 0.9f, coreR * 0.9f, pFill)
-
-        if (active) {
-            pGlow.color = fade(C_GLACIER_GLOW, alpha01)
-            c.drawRoundRect(rr, rad, rad, pGlow)
-        }
-        pStroke.strokeWidth = dp(1.4f)
+    private fun faceColor(key: String): Int = when (key) {
+        "A" -> col.faceA
+        "B" -> col.faceB
+        "X" -> col.faceX
+        else -> col.faceY
     }
 
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
         if (w <= 0f) return
-        // 背景：黑曜石模糊环境（玻璃折射的色彩来源）
-        val bb = backdropBlur
-        if (bb != null && !bb.isRecycled) {
-            canvas.drawBitmap(bb, null, fullRect.apply { set(0f, 0f, w, h) }, pBitmap)
-        } else {
-            canvas.drawColor(0xFF07080A.toInt())
-        }
+
+        // 底色与控件同色系：立体感全部交给双向柔和阴影，避免"塑料玩具"感
+        neumo.background(canvas, w, h)
 
         fun shown(k: String) = !isHidden(k)
 
@@ -902,10 +715,7 @@ class GamepadView @JvmOverloads constructor(
         if (shown("RS")) drawStick(canvas, rsCenter, rsKnob, rsR, rsKnobR, "RS")
 
         if (shown("DP")) drawDpad(canvas)
-        if (shown("A") || shown("B") || shown("X") || shown("Y")) {
-            // 逐个隐藏：drawAbxy 内部按 key 再判一次
-            drawAbxy(canvas)
-        }
+        if (shown("A") || shown("B") || shown("X") || shown("Y")) drawAbxy(canvas)
 
         if (shown("LB")) drawPill(canvas, rectLB, "LB", (state.buttons and Btn.LB) != 0, "LB")
         if (shown("RB")) drawPill(canvas, rectRB, "RB", (state.buttons and Btn.RB) != 0, "RB")
@@ -916,45 +726,44 @@ class GamepadView @JvmOverloads constructor(
         if (editMode) drawEditOverlay(canvas)
     }
 
-    // ---------- 绘制 ----------
+    // ---- 摇杆：凹槽井 + 立体摇杆帽 ----
 
-    private fun drawStick(c: Canvas, center: PointF, knob: PointF, radius: Float,
-                          knobRadius: Float, key: String) {
+    private fun drawStick(
+        c: Canvas, center: PointF, knob: PointF, radius: Float,
+        knobRadius: Float, key: String,
+    ) {
         if (radius <= 0f) return
         val (a01, ty) = introOf(key)
         if (a01 <= 0f) return
         val cy = center.y + ty
         val ca01 = a01 * ov(key).a
         val active = hypot(knob.x, knob.y) > 2f
-        // 轻点摇杆触发 L3/R3 时的短促高亮反馈；模式 3 下按住期间也保持高亮
+
         val flashAt = if (key == "LS") lsPulseAt else rsPulseAt
         val heldBit = if (key == "LS") Btn.L3 else Btn.R3
         val tapped = SystemClock.uptimeMillis() - flashAt < STICK_PULSE_MS
         val lit = active || tapped || (state.buttons and heldBit) != 0
 
-        // 玻璃底座（多层烟熏玻璃）
-        layeredGlassCircle(c, center.x, cy, radius, 0f, ca01, active)
+        // 1) 挖进面板的摇杆井
+        neumo.insetCircle(c, center.x, cy, radius, ca01, 1f)
 
-        // 井内玻璃芯（下凹的第二层）
-        pFill.color = fade(C_WELL, ca01)
-        c.drawCircle(center.x, cy, radius * 0.60f, pFill)
-        pStroke.color = fade(C_INSHADOW, ca01)
-        pStroke.strokeWidth = dp(1.8f)
-        tmp.set(center.x - radius * 0.60f + dp(1f), cy - radius * 0.60f + dp(1f),
-                center.x + radius * 0.60f - dp(1f), cy)
-        c.drawArc(tmp, 180f, 180f, false, pStroke)
+        // 2) 井底同心细环（MD3 层次提示活动范围）
+        pStroke.color = fade(col.outline, ca01 * 0.34f)
+        pStroke.strokeWidth = dp(1f)
+        c.drawCircle(center.x, cy, radius * 0.78f, pStroke)
 
-        // 立体玻璃摇杆帽（独立悬浮）
-        val knobPress = if (lit) 0.4f else 0f
-        layeredGlassCircle(c, center.x + knob.x, cy + knob.y, knobRadius,
-                           knobPress, ca01, lit)
-        if (lit) {
-            pStroke.color = fade(C_GLACIER, ca01 * 0.8f)
-            pStroke.strokeWidth = dp(1.2f)
-            c.drawCircle(center.x + knob.x, cy + knob.y, knobRadius + dp(1.4f), pStroke)
-            pStroke.strokeWidth = dp(1.4f)
-        }
+        // 3) 悬浮摇杆帽
+        val kx = center.x + knob.x
+        val ky = cy + knob.y
+        neumo.raisedCircle(c, kx, ky, knobRadius, 0f, ca01,
+            ring = if (lit) col.accent else null)
+
+        // 4) 帽顶指向点：激活时用强调色，安静时用次级色
+        pFill.color = fade(col.accent, ca01 * if (lit) 0.90f else 0.30f)
+        c.drawCircle(kx, ky, knobRadius * 0.28f, pFill)
     }
+
+    // ---- 方向键：凸起底盘 + 四条独立凸起臂 ----
 
     private fun drawDpad(c: Canvas) {
         if (dpR <= 0f) return
@@ -962,83 +771,65 @@ class GamepadView @JvmOverloads constructor(
         if (a01 <= 0f) return
         val ca01 = a01 * ov("DP").a
         val cy = dpCenter.y + ty
-
-        // 玻璃底盘
-        layeredGlassCircle(c, dpCenter.x, cy, dpR, 0f, ca01, false)
-
-        val t = dpR * 0.34f
-        val reach = dpR * 0.80f
         val cx = dpCenter.x
-        val rad = t * 0.35f
 
-        fun arm(zone: Int, active: Boolean, set: (RectF) -> Unit) {
-            val pp = pressP(zone)
-            set(tmp)
-            // 悬浮玻璃臂（内芯层样式：按压下沉）
-            pShadow.color = fade(C_AO, ca01 * (1f - pp * 0.5f))
-            tmp2.set(tmp)
-            tmp2.offset(0f, dp(1.5f))
-            c.drawRoundRect(tmp2, rad, rad, pShadow)
-            pFill.color = fade(if (pp > 0.5f) C_CORE_ON else C_CORE, ca01)
-            c.drawRoundRect(tmp, rad, rad, pFill)
-            pStroke.color = fade(C_SILVER_DIM, ca01)
-            pStroke.strokeWidth = dp(0.8f)
-            c.drawRoundRect(tmp, rad, rad, pStroke)
-            pStroke.color = fade(C_REFRACT, ca01)
-            pStroke.strokeWidth = dp(0.9f)
-            tmp2.set(tmp.left + dp(0.8f), tmp.top + dp(0.8f),
-                     tmp.right - dp(0.8f), tmp.centerY())
-            c.drawRoundRect(tmp2, rad * 0.8f, rad * 0.8f, pStroke)
-            if (active) {
-                pGlow.color = fade(C_GLACIER_GLOW, ca01)
-                c.drawRoundRect(tmp, rad, rad, pGlow)
-            }
-            pStroke.strokeWidth = dp(1.4f)
-        }
+        neumo.raisedCircle(c, cx, cy, dpR, 0f, ca01)
 
-        arm(Z_UP, (state.buttons and Btn.UP) != 0) {
-            tmp.set(cx - t / 2, cy - reach, cx + t / 2, cy - t * 0.15f)
-        }
-        arm(Z_DOWN, (state.buttons and Btn.DOWN) != 0) {
-            tmp.set(cx - t / 2, cy + t * 0.15f, cx + t / 2, cy + reach)
-        }
-        arm(Z_LEFT, (state.buttons and Btn.LEFT) != 0) {
-            tmp.set(cx - reach, cy - t / 2, cx - t * 0.15f, cy + t / 2)
-        }
-        arm(Z_RIGHT, (state.buttons and Btn.RIGHT) != 0) {
-            tmp.set(cx + t * 0.15f, cy - t / 2, cx + reach, cy + t / 2)
+        val t = dpR * 0.32f
+        val reach = dpR * 0.78f
+        val rad = dp(9f)
+        val inner = t * 0.22f
+
+        drawDpadArm(c, Z_UP, (state.buttons and Btn.UP) != 0,
+            cx - t / 2, cy - reach, cx + t / 2, cy - inner, rad, ca01)
+        drawDpadArm(c, Z_DOWN, (state.buttons and Btn.DOWN) != 0,
+            cx - t / 2, cy + inner, cx + t / 2, cy + reach, rad, ca01)
+        drawDpadArm(c, Z_LEFT, (state.buttons and Btn.LEFT) != 0,
+            cx - reach, cy - t / 2, cx - inner, cy + t / 2, rad, ca01)
+        drawDpadArm(c, Z_RIGHT, (state.buttons and Btn.RIGHT) != 0,
+            cx + inner, cy - t / 2, cx + reach, cy + t / 2, rad, ca01)
+    }
+
+    private fun drawDpadArm(
+        c: Canvas, zone: Int, active: Boolean,
+        l: Float, t: Float, r: Float, b: Float, radius: Float, alpha: Float,
+    ) {
+        tmp.set(l, t, r, b)
+        val pp = pressP(zone)
+        neumo.raisedRect(c, tmp, radius, pp, alpha, tint = 0.055f)
+        if (active) {
+            pFill.color = fade(col.accent, alpha * 0.22f)
+            c.drawRoundRect(tmp, radius, radius, pFill)
         }
     }
+
+    // ---- ABXY：凸起圆钮 + 语义字母色 ----
 
     private fun drawAbxy(c: Canvas) {
-        val faces: List<Triple<PointF, String, Int>> = listOf(
-            Triple(cY, "Y", C_Y), Triple(cA, "A", C_A),
-            Triple(cX, "X", C_X), Triple(cB, "B", C_B)
-        )
-        faces.forEach { (p, key, color) ->
-            val active = (state.buttons and bitByName(key)) != 0
-            val radius = when (key) {
-                "A" -> rA; "B" -> rB; "X" -> rX; else -> rY
-            }
-            val (a01, ty) = introOf(key)
-            drawFace(c, p, label = key, color = color, active = active,
-                     radius = radius, key = key, a01 = a01, ty = ty)
-        }
+        drawFace(c, cY, "Y", rY)
+        drawFace(c, cA, "A", rA)
+        drawFace(c, cX, "X", rX)
+        drawFace(c, cB, "B", rB)
     }
 
-    /** ABXY：多层烟熏玻璃 + 高对比彩色字母（身份识别）。 */
-    private fun drawFace(c: Canvas, p: PointF, label: String, color: Int, active: Boolean,
-                         radius: Float, key: String, a01: Float, ty: Float) {
-        if (radius <= 0f || a01 <= 0f || isHidden(key)) return
-        val ca01 = a01 * ov(key).a
-        val pp = pressP(zoneOfKey(key))
+    private fun drawFace(c: Canvas, p: PointF, label: String, radius: Float) {
+        if (radius <= 0f || isHidden(label)) return
+        val (a01, ty) = introOf(label)
+        if (a01 <= 0f) return
+        val ca01 = a01 * ov(label).a
+        val active = (state.buttons and bitByName(label)) != 0
+        val pp = pressP(zoneOfKey(label))
         val cy = p.y + ty
+        val tint = faceColor(label)
 
-        layeredGlassCircle(c, p.x, cy, radius, pp, ca01, active)
+        neumo.raisedCircle(c, p.x, cy, radius, pp, ca01,
+            ring = if (active) tint else null)
 
-        // 高对比字母（保持彩色身份，按下向白提亮）
-        pText.color = fade(lerp(color, 0xFFFFFFFF.toInt(), if (active) 0.6f else 0.1f), ca01)
-        pText.textSize = radius * 0.95f
+        pText.color = fade(
+            if (active) lerp(tint, 0xFFFFFFFF.toInt(), 0.30f) else tint,
+            ca01
+        )
+        pText.textSize = radius * 0.92f
         pText.isFakeBoldText = true
         val fm = pText.fontMetrics
         c.drawText(label, p.x, cy - (fm.ascent + fm.descent) / 2f, pText)
@@ -1046,28 +837,39 @@ class GamepadView @JvmOverloads constructor(
         pText.alpha = 255
     }
 
+    // ---- 肩键 / BACK：凸起胶囊 ----
+
     private fun drawPill(c: Canvas, r: RectF, label: String, active: Boolean, key: String) {
         val (a01, ty) = introOf(key)
         if (a01 <= 0f) return
         val ca01 = a01 * ov(key).a
-        val rad = r.height() * 0.42f
-        val zone = zoneOfKey(key)
-        val pp = pressP(zone)
+        val rad = r.height() * 0.5f
+        val pp = pressP(zoneOfKey(key))
 
         tmp.set(r)
         tmp.offset(0f, ty)
-        layeredGlassRect(c, tmp, rad, pp, ca01, active)
+        neumo.raisedRect(c, tmp, rad, pp, ca01)
+        if (active) {
+            pFill.color = fade(col.accent, ca01 * 0.20f)
+            c.drawRoundRect(tmp, rad, rad, pFill)
+        }
 
-        pText.color = fade(if (active || pp > 0.5f) C_TXT_ON else C_TXT, ca01)
-        pText.textSize = min(r.height() * 0.50f, r.width() * 0.28f)
+        pText.color = fade(
+            if (active || pp > 0.5f) col.accentInk else col.onSurface,
+            ca01
+        )
+        pText.textSize = min(r.height() * 0.40f, r.width() * 0.42f)
         pText.isFakeBoldText = true
+        pText.letterSpacing = 0.04f
         val fm = pText.fontMetrics
         c.drawText(label, r.centerX(), r.centerY() + ty - (fm.ascent + fm.descent) / 2f, pText)
+        pText.letterSpacing = 0f
         pText.isFakeBoldText = false
         pText.alpha = 255
     }
 
-    /** Home / Xbox 键：圆形玻璃钮 + 细环 + 中央 X，独立占用 Btn.GUIDE。 */
+    // ---- Home / Xbox 键 ----
+
     private fun drawGuideButton(c: Canvas) {
         if (rGuide <= 0f) return
         val (a01, ty) = introOf("GUIDE")
@@ -1077,22 +879,25 @@ class GamepadView @JvmOverloads constructor(
         val pp = pressP(Z_GUIDE)
         val cy = cGuide.y + ty
 
-        layeredGlassCircle(c, cGuide.x, cy, rGuide, pp, ca01, active)
+        neumo.raisedCircle(c, cGuide.x, cy, rGuide, pp, ca01,
+            ring = if (active) col.accent else null)
 
-        pStroke.color = fade(if (active || pp > 0.5f) C_TXT_ON else C_TXT, ca01)
+        // 内圈：强调键位身份
+        pStroke.color = fade(if (active) col.accentInk else col.outline, ca01 * 0.95f)
         pStroke.strokeWidth = dp(1.2f)
-        c.drawCircle(cGuide.x, cy, rGuide * 0.52f, pStroke)
-        pText.color = fade(if (active || pp > 0.5f) C_TXT_ON else C_TXT, ca01)
-        pText.textSize = rGuide * 0.72f
+        c.drawCircle(cGuide.x, cy, rGuide * 0.58f, pStroke)
+
+        pText.color = fade(if (active) col.accentInk else col.onSurface, ca01)
+        pText.textSize = rGuide * 0.66f
         pText.isFakeBoldText = true
         val fm = pText.fontMetrics
         c.drawText("X", cGuide.x, cy - (fm.ascent + fm.descent) / 2f, pText)
         pText.isFakeBoldText = false
         pText.alpha = 255
-        pStroke.strokeWidth = dp(1.4f)
     }
 
-    /** ☰ 菜单键：黑曜石玻璃圆钮 + 三条横线，映射 Btn.START。 */
+    // ---- ☰ 菜单键 ----
+
     private fun drawMenuButton(c: Canvas) {
         if (rMenu <= 0f) return
         val (a01, ty) = introOf("MENU")
@@ -1102,13 +907,13 @@ class GamepadView @JvmOverloads constructor(
         val pp = pressP(Z_MENU)
         val cy = cMenu.y + ty
 
-        layeredGlassCircle(c, cMenu.x, cy, rMenu, pp, ca01, active)
+        neumo.raisedCircle(c, cMenu.x, cy, rMenu, pp, ca01,
+            ring = if (active) col.accent else null)
 
-        // 三条横线（☰）
-        val lw = rMenu * 0.56f
-        val lh = maxOf(dp(2.4f), rMenu * 0.105f)
-        val gap = rMenu * 0.245f
-        pFill.color = fade(if (active || pp > 0.5f) C_TXT_ON else C_TXT, ca01)
+        val lw = rMenu * 0.54f
+        val lh = maxOf(dp(2f), rMenu * 0.085f)
+        val gap = rMenu * 0.23f
+        pFill.color = fade(if (active) col.accentInk else col.onSurface, ca01)
         for (k in -1..1) {
             val ly = cy + k * gap
             tmp.set(cMenu.x - lw / 2f, ly - lh / 2f, cMenu.x + lw / 2f, ly + lh / 2f)
@@ -1116,32 +921,48 @@ class GamepadView @JvmOverloads constructor(
         }
     }
 
+    // ---- LT / RT：凹陷行程槽 + 强调色填充 ----
+
     private fun drawTrigger(c: Canvas, r: RectF, label: String, value: Int, key: String) {
         val (a01, ty) = introOf(key)
         if (a01 <= 0f) return
         val ca01 = a01 * ov(key).a
         val rad = r.width() / 2f
-        val rr = RectF(r)
+        val rr = tmp2
+        rr.set(r)
         rr.offset(0f, ty)
-        val zone = zoneOfKey(key)
-        val pp = pressP(zone)
         val frac = value.coerceIn(0, 255) / 255f
 
-        layeredGlassRect(c, rr, rad, pp, ca01, frac > 0.3f)
+        // 凹槽：与按下状态同一套语言
+        neumo.insetRect(c, rr, rad, ca01)
 
-        // 行程填充（冰川蓝，连续触发的直观反馈）
+        // 行程填充
         if (frac > 0.02f) {
-            val h = rr.height() * frac
-            tmp.set(rr.left + dp(1.5f), rr.bottom - h - dp(1.5f),
-                    rr.right - dp(1.5f), rr.bottom - dp(1.5f))
-            pFill.color = fade(C_GLACIER_FILL, ca01)
-            c.drawRoundRect(tmp, rad * 0.8f, rad * 0.8f, pFill)
+            val inner = dp(2.5f)
+            val hh = (rr.height() - inner * 2f) * frac
+            tmp.set(rr.left + inner, rr.bottom - inner - hh, rr.right - inner, rr.bottom - inner)
+            pFill.shader = neumo.triggerFill(tmp.height(), frac, col.accent, ca01)
+            // Shader 用局部坐标，先平移到填充区左上角再画
+            c.save()
+            c.translate(tmp.left, tmp.top)
+            c.drawRoundRect(0f, 0f, tmp.width(), tmp.height(), rad * 0.72f, rad * 0.72f, pFill)
+            c.restore()
+            pFill.shader = null
+        }
+
+        // 25 / 50 / 75 刻度（两侧短刻线）
+        pStroke.color = fade(col.outline, ca01 * 0.60f)
+        pStroke.strokeWidth = dp(1f)
+        for (i in 1..3) {
+            val y = rr.bottom - rr.height() * (i / 4f)
+            c.drawLine(rr.left + dp(3f), y, rr.left + dp(6.5f), y, pStroke)
+            c.drawLine(rr.right - dp(6.5f), y, rr.right - dp(3f), y, pStroke)
         }
 
         c.save()
         c.rotate(-90f, rr.centerX(), rr.centerY())
-        pText.color = fade(if (frac > 0.4f) C_TXT_ON else C_TXT_DIM, ca01)
-        pText.textSize = rr.width() * 0.50f
+        pText.color = fade(if (frac > 0.4f) col.accentInk else col.onSurfaceVar, ca01)
+        pText.textSize = rr.width() * 0.44f
         pText.isFakeBoldText = true
         val fm = pText.fontMetrics
         c.drawText(label, rr.centerX(), rr.centerY() - (fm.ascent + fm.descent) / 2f, pText)
@@ -1199,19 +1020,19 @@ class GamepadView @JvmOverloads constructor(
             val r = outlineOf(key)
             val sel = key == selectedKey
             if (sel) {
-                pEditSel.color = C_ACCENT
+                pEditSel.color = col.accentInk
                 c.drawRect(r, pEditSel)
             } else {
-                pEdit.color = 0x4D6FA8DC
+                pEdit.color = fade(col.accentInk, 0.45f)
                 c.drawRect(r, pEdit)
             }
         }
         selectedKey?.let { key ->
             val r = outlineOf(key)
-            pFill.color = C_GLACIER
-            pFill.alpha = 0xFF
+            pFill.color = col.accent
+            pFill.alpha = 255
             val name = CTRL_NAMES[key] ?: key
-            pText.color = C_DARK
+            pText.color = col.onAccent
             pText.textSize = dp(12f)
             pText.isFakeBoldText = true
             val label = if (editTarget == 0) {
