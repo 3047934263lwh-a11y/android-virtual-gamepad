@@ -41,6 +41,8 @@
         android:visibility="invisible">
 
         <!-- 原位置「手柄」文字 + 连接状态点：连接栏唯一的折叠开关，始终可见 -->
+        <!-- 文字几何居中：paddingStart 20dp = paddingEnd 8dp + 圆点(4dp 间距 + 8dp 直径)，
+             文字重心正好落在胶囊中心；圆点距右缘 8dp，不会被收起动画裁切 -->
         <LinearLayout
             android:id="@+id/titleBox"
             android:layout_width="wrap_content"
@@ -52,15 +54,10 @@
             android:contentDescription="@string/bar_title"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingStart="8dp"
-            android:paddingTop="4dp"
+            android:paddingStart="20dp"
+            android:paddingTop="6dp"
             android:paddingEnd="8dp"
-            android:paddingBottom="4dp">
-
-            <View
-                android:id="@+id/chipSpacer"
-                android:layout_width="15dp"
-                android:layout_height="1dp" />
+            android:paddingBottom="6dp">
 
             <TextView
                 android:id="@+id/barTitle"
@@ -76,9 +73,9 @@
 
             <View
                 android:id="@+id/statusDot"
-                android:layout_width="10dp"
-                android:layout_height="10dp"
-                android:layout_marginStart="5dp"
+                android:layout_width="8dp"
+                android:layout_height="8dp"
+                android:layout_marginStart="4dp"
                 android:importantForAccessibility="no"
                 android:background="@drawable/bg_dot_state" />
 

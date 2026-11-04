@@ -1408,11 +1408,11 @@ class MainActivity : AppCompatActivity() {
         val text = barTitle.text?.toString() ?: ""
         val spacing = barTitle.letterSpacing * barTitle.textSize * text.length
         val textW = barTitle.paint.measureText(text) + spacing
-        val dotW = dp(DOT_DP) + dp(5)    // 状态点直径 + 与文字的间距
-        val titleBoxW = titleBox.paddingStart + titleBox.paddingEnd + textW + dotW
+        // paddingStart20 + 文字 + 间距4 + 圆点8 + paddingEnd8（与布局同源）
+        val titleBoxW = titleBox.paddingStart + titleBox.paddingEnd + textW + dp(DOT_DP) + dp(4)
         val marginEnd = (titleBox.layoutParams as? ViewGroup.MarginLayoutParams)?.rightMargin ?: 0
-        // 必须容纳：栏 paddingStart + 标题盒宽 + 标题 marginEnd + 栏 paddingEnd，再留 10dp 余量
-        return dp(12) + titleBoxW.toInt() + marginEnd + dp(12) + dp(10)
+        // 必须容纳：栏 paddingStart + 标题盒宽 + 标题 marginEnd + 栏 paddingEnd，再留 16dp 余量
+        return dp(12) + titleBoxW.toInt() + marginEnd + dp(12) + dp(16)
     }
 
     private fun applyBarWidth(w: Int) {
