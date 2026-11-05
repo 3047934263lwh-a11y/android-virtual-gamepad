@@ -416,6 +416,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         root.addWidget(self._build_header())
+        root.addWidget(rule())          # 贯穿全宽的 1px 发丝分区，不切断星空
 
         body = Block("body")
         bl = QHBoxLayout(body)
@@ -438,8 +439,7 @@ class MainWindow(QMainWindow):
         head.setObjectName("section")
         head.setFont(font(8, bold=True, tracking=1.2))
         lay.addWidget(head)
-        lay.addWidget(rule())
-        lay.addSpacing(24)
+        lay.addSpacing(28)
 
         lab = QLabel("HOST ADDRESS  ·  在手机 App 中填写")
         lab.setObjectName("fieldLabel")
@@ -485,8 +485,7 @@ class MainWindow(QMainWindow):
         head.setObjectName("section")
         head.setFont(font(8, bold=True, tracking=1.2))
         lay.addWidget(head)
-        lay.addWidget(rule())
-        lay.addSpacing(24)
+        lay.addSpacing(28)
 
         lab = QLabel("CONNECTED  ·  最多 4 台")
         lab.setObjectName("fieldLabel")

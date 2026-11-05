@@ -19,8 +19,8 @@ RED = "#D8232A"          # 唯一信号色
 RED_BRIGHT = "#FF4D54"   # 暗底上的可读红
 WHITE = "#F2F5FA"        # 亮文字
 BG_DEEP = "#1B2735"      # 星空渐变中心色
-BG_CELL = "rgba(9, 13, 20, 0.58)"
-BG_CELL_ALT = "rgba(9, 13, 20, 0.34)"
+BG_CELL = "rgba(9, 13, 20, 0.46)"
+BG_CELL_ALT = "rgba(9, 13, 20, 0.46)"   # 与左栏一致：整张星空亮度连续贯穿左右
 BG_HEADER = "rgba(7, 10, 16, 0.88)"
 BG_FOOTER = "rgba(9, 10, 15, 0.72)"
 
@@ -75,7 +75,7 @@ QAbstractButton#winBtn {{
 QWidget#headerInactive QLabel#brand {{ color: #B8C2D0; }}
 QWidget#headerInactive QLabel#headerState {{ color: #98A4B4; }}
 
-/* ---- Grid：1px 发丝分区，半透明深色单元格 ---- */
+/* ---- Grid：底色与 1px 竖线保留；两栏底色一致，星空一整张贯穿左右 ---- */
 QWidget#gridCell {{
     border-right: 1px solid {LINE};
     background: {BG_CELL};
