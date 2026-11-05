@@ -46,12 +46,31 @@ kernel32.DeviceIoControl.argtypes = [ctypes.c_void_p, wintypes.DWORD,
                                      ctypes.POINTER(wintypes.DWORD),
                                      ctypes.c_void_p]
 
+kernel32.CreateEventW.restype = wintypes.HANDLE
+kernel32.CreateEventW.argtypes = [ctypes.c_void_p, wintypes.BOOL,
+                                  wintypes.BOOL, ctypes.c_wchar_p]
+kernel32.ResetEvent.argtypes = [wintypes.HANDLE]
+kernel32.WaitForSingleObject.restype = wintypes.DWORD
+kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+kernel32.GetOverlappedResult.restype = wintypes.BOOL
+kernel32.GetOverlappedResult.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                                         ctypes.POINTER(wintypes.DWORD),
+                                         wintypes.BOOL]
+kernel32.CancelIoEx.restype = wintypes.BOOL
+kernel32.CancelIoEx.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+
+WAIT_OBJECT_0 = 0x00000000
+ERROR_IO_PENDING = 997
+ERROR_OPERATION_ABORTED = 995
+ERROR_ACCESS_DENIED = 5
+
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
 FILE_SHARE_RW = 1 | 2
 OPEN_EXISTING = 3
 FILE_ATTRIBUTE_NORMAL = 0x80
+FILE_FLAG_OVERLAPPED = 0x40000000
 
 # ---------- IOCTL（CTL_CODE: dev=FILE_DEVICE_BUS_EXTENDER, base=0x801） ----------
 FILE_DEVICE_BUS_EXTENDER = 0x0000002A
@@ -70,6 +89,9 @@ IOCTL_VIGEM_UNPLUG_TARGET = _ctl(_BASE + 0x001, FILE_WRITE_DATA)
 IOCTL_VIGEM_CHECK_VERSION = _ctl(_BASE + 0x002, FILE_WRITE_DATA)
 IOCTL_VIGEM_WAIT_DEVICE_READY = _ctl(_BASE + 0x003, FILE_WRITE_DATA)
 IOCTL_XUSB_SUBMIT_REPORT = _ctl(_BASE + 0x201, FILE_WRITE_DATA)
+# BUSENUM_RW_IOCTL = FILE_READ_DATA | FILE_WRITE_DATA，方向位不同，不能复用上面的 W 版本
+IOCTL_XUSB_REQUEST_NOTIFICATION = _ctl(_BASE + 0x200,
+                                       FILE_WRITE_DATA | FILE_READ_DATA)
 
 TARGET_XBOX360_WIRED = 0
 VIGEM_COMMON_VERSION = 0x0001
@@ -101,10 +123,17 @@ VIGEM_ERROR_BUS_ACCESS_FAILED = 0x20000001
 VIGEM_ERROR_BUS_ALREADY_CONNECTED = 0x20000002
 VIGEM_ERROR_BUS_VERSION_MISMATCH = 0x20000004
 VIGEM_ERROR_TARGET_UNEXPECTED = 0x2000000E
+VIGEM_ERROR_CALLBACK_ALREADY_REGISTERED = 0xE0000010
 
 
-def _open_bus() -> int:
-    """枚举接口 → 打开 → 版本协商。成功返回句柄，失败抛 VIGEM 错误码。"""
+def _open_bus(overlapped: bool = False) -> int:
+    """枚举接口 → 打开 → 版本协商。成功返回句柄，失败抛 VIGEM 错误码。
+
+    挂起的 IOCTL_XUSB_REQUEST_NOTIFICATION 必须使用以
+    FILE_FLAG_OVERLAPPED 打开的句柄；若在同步句柄上投递 overlapped 请求，
+    该句柄会被该请求独占，后续 IOCTL_XUSB_SUBMIT_REPORT 将永久阻塞。
+    故力反馈使用独立的重叠句柄，与提交报文的主句柄互不干扰。
+    """
     size = ctypes.c_uint(0)
     cr = cfg.CM_Get_Device_Interface_List_SizeW(
         ctypes.byref(size), ctypes.byref(_GUID_BYTES), None, 0)
@@ -116,9 +145,9 @@ def _open_bus() -> int:
     if cr != CR_SUCCESS or not buf.value:
         raise OSError(VIGEM_ERROR_BUS_NOT_FOUND)
 
+    flags = FILE_ATTRIBUTE_NORMAL | (FILE_FLAG_OVERLAPPED if overlapped else 0)
     h = kernel32.CreateFileW(buf.value, GENERIC_READ | GENERIC_WRITE,
-                             FILE_SHARE_RW, None, OPEN_EXISTING,
-                             FILE_ATTRIBUTE_NORMAL, None)
+                             FILE_SHARE_RW, None, OPEN_EXISTING, flags, None)
     if h in (0, INVALID_HANDLE_VALUE):
         err = ctypes.get_last_error()
         raise OSError(VIGEM_ERROR_BUS_ACCESS_FAILED if err == 5
@@ -243,6 +272,26 @@ class VIGEM_WAIT_DEVICE_READY(ctypes.Structure):
                 ("SerialNo", ctypes.c_uint)]
 
 
+class OVERLAPPED(ctypes.Structure):
+    """Windows OVERLAPPED。x64 布局 32 字节：2×size_t + 2×DWORD + HANDLE。"""
+
+    _fields_ = [("Internal", ctypes.c_size_t),
+                ("InternalHigh", ctypes.c_size_t),
+                ("Offset", wintypes.DWORD),
+                ("OffsetHigh", wintypes.DWORD),
+                ("hEvent", wintypes.HANDLE)]
+
+
+class XUSB_REQUEST_NOTIFICATION(ctypes.Structure):
+    """BusShared.h: Size + SerialNo + LargeMotor + SmallMotor + LedNumber = 12 字节。"""
+
+    _fields_ = [("Size", ctypes.c_uint),
+                ("SerialNo", ctypes.c_uint),
+                ("LargeMotor", ctypes.c_ubyte),
+                ("SmallMotor", ctypes.c_ubyte),
+                ("LedNumber", ctypes.c_ubyte)]
+
+
 class VX360Gamepad:
     """vgamepad.VX360Gamepad 的协议级替代实现。"""
 
@@ -267,6 +316,9 @@ class VX360Gamepad:
         self._report = XUSB_REPORT()
         self.cmp_func = None
         self._notif_thread = None
+        self._notif_stop = None
+        self._notif_handle = None
+        self._notif_userdata = None
 
     # ---- vgamepad 兼容属性 ----
     @property
@@ -305,13 +357,85 @@ class VX360Gamepad:
         pkt.Report = self._report
         _ioctl(self._client, IOCTL_XUSB_SUBMIT_REPORT, pkt)
 
-    def register_notification(self, fn) -> None:
-        # 震动回传：IOCTL_XUSB_REQUEST_NOTIFICATION 挂起语义，暂不实现，
-        # receiver.py 对注册失败已有降级（仅警告，不影响按键/摇杆）。
-        raise NotImplementedError("vibration feedback pending")
+    def register_notification(self, fn, user_data=None) -> None:
+        """注册力反馈回调：fn(client, target, large, small, led, user_data)。
+
+        语义与 ViGEmClient 一致：对总线句柄发挂起的
+        IOCTL_XUSB_REQUEST_NOTIFICATION，驱动在游戏下发震动时完成该请求；
+        完成后重新发起下一次请求，形成长驻监听。故必须由独立线程阻塞等待。
+        """
+        if self._notif_thread is not None and self._notif_thread.is_alive():
+            raise OSError(VIGEM_ERROR_CALLBACK_ALREADY_REGISTERED)
+        if fn is None:
+            raise ValueError("notification callback is required")
+        # 独立的重叠句柄：与提交报文的主句柄隔离，避免挂起请求独占句柄
+        self._notif_handle = _open_bus(overlapped=True)
+        self.cmp_func = fn
+        self._notif_userdata = user_data
+        self._notif_stop = threading.Event()
+        self._notif_thread = threading.Thread(
+            target=self._notify_loop, args=(fn,), name="vgm-notify", daemon=True)
+        self._notif_thread.start()
+
+    def _notify_loop(self, fn) -> None:
+        client = self._notif_handle
+        req = XUSB_REQUEST_NOTIFICATION()
+        req.Size = ctypes.sizeof(req)
+        req.SerialNo = self.serial
+        ov = OVERLAPPED()
+        ov.hEvent = kernel32.CreateEventW(None, True, False, None)
+        if not ov.hEvent:
+            self._notif_thread = None
+            return
+        ov_p = ctypes.cast(ctypes.byref(ov), ctypes.c_void_p)
+        xfer = wintypes.DWORD(0)
+        try:
+            while not self._notif_stop.is_set():
+                kernel32.ResetEvent(ov.hEvent)
+                ok = kernel32.DeviceIoControl(
+                    client, IOCTL_XUSB_REQUEST_NOTIFICATION,
+                    ctypes.byref(req), req.Size,
+                    ctypes.byref(req), req.Size,
+                    ctypes.byref(xfer), ov_p)
+                if not ok:
+                    err = ctypes.get_last_error()
+                    if err != ERROR_IO_PENDING:
+                        break        # 驱动不认该请求：退出监听
+                # 200 ms 轮询，兼顾「及时回调」与「可被 unregister 打断」
+                while True:
+                    r = kernel32.WaitForSingleObject(ov.hEvent, 200)
+                    if r == WAIT_OBJECT_0:
+                        break
+                    if self._notif_stop.is_set():
+                        kernel32.CancelIoEx(client, ov_p)
+                        kernel32.WaitForSingleObject(ov.hEvent, 500)
+                        return
+                if not kernel32.GetOverlappedResult(client, ov_p,
+                                                   ctypes.byref(xfer), False):
+                    err = ctypes.get_last_error()
+                    if err in (ERROR_ACCESS_DENIED, ERROR_OPERATION_ABORTED):
+                        break
+                    continue
+                try:
+                    fn(client, self, int(req.LargeMotor), int(req.SmallMotor),
+                       int(req.LedNumber), self._notif_userdata)
+                except Exception:    # noqa: BLE001  回调异常不得打断监听
+                    pass
+        finally:
+            kernel32.CloseHandle(ov.hEvent)
+            self._notif_thread = None
 
     def unregister_notification(self) -> None:
-        pass
+        if self._notif_stop is not None:
+            self._notif_stop.set()
+        th = self._notif_thread
+        if th is not None and th.is_alive():
+            th.join(timeout=1.5)
+        self._notif_thread = None
+        if self._notif_handle is not None:
+            kernel32.CloseHandle(self._notif_handle)
+            self._notif_handle = None
+        self.cmp_func = None
 
 
 def bus_close() -> None:
