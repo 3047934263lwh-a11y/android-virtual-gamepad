@@ -1,106 +1,152 @@
-# Mando virtual de Xbox 360 (Android → Windows)
+# Tu móvil como mando · Mando virtual de Xbox 360 (Android → Windows)
 
 **Idioma / Language**: [简体中文](README.md) · [English](README.en.md) · [日本語](README.ja.md) · [Español](README.es.md) · [Русский](README.ru.md)
 
-![License](https://img.shields.io/badge/license-MIT-green) ![Platform](https://img.shields.io/badge/platform-Windows%20%2B%20Android-blue) ![Protocol](https://img.shields.io/badge/transport-UDP%20125Hz-orange)
+![License](https://img.shields.io/badge/license-MIT-green) ![Platform](https://img.shields.io/badge/platform-Windows%20%2B%20Android-blue) ![Transport](https://img.shields.io/badge/transport-UDP%20250Hz-orange) ![Version](https://img.shields.io/badge/release-v1.1.0-purple)
 
-Usa un teléfono Android como mando virtual de Xbox 360. Los sticks, la cruceta, ABXY, los botones traseros y los gatillos se envían por UDP en la red local hacia el PC, donde el driver de kernel **ViGEmBus** crea un dispositivo XInput virtual. Para los juegos es un **mando real de Xbox 360** — sin inyección de procesos, sin sustitución de DLL, sin hooks de API.
+> **En una línea**: convierte tu móvil Android en un mando de Xbox 360 **reconocido de forma nativa**
+> por Windows. Conexión directa por LAN: los juegos ven un mando real, no un mapeo de teclado ni una macro.
 
-> Inicio rápido: [`QUICKSTART.md`](QUICKSTART.md) (en chino). Los mismos pasos se resumen abajo.
+---
 
-## Funciones
+## Para quién es
 
-| Función | Descripción |
+| Tu situación | Lo que consigues |
 | --- | --- |
-| Mando real de Xbox 360 | Dispositivo virtual a nivel de kernel; los juegos XInput lo reconocen de forma nativa |
-| **Multijugador local (P1–P4)** | Varios teléfonos en un PC: cada uno recibe su propio mando y número de jugador; la vibración vuelve al teléfono correcto |
-| **Puntería por giroscopio** | Girar el teléfono = girar la cámara (orientación fusionada, sin deriva); se **suma** al stick derecho; sensibilidad de giro y de stick derecho independientes (0–100); interruptores de inversión de pitch/yaw |
-| Vibración | Los motores de `XInputSetState` se devuelven al teléfono |
-| Edición por control | Mover / cambiar tamaño / opacidad de cada control, con guardado automático |
-| Interfaz de vidrio oscuro | Estética de vidrio obsidiana en capas, letras ABXY de colores de alto contraste, animación de pulsación |
-| Reconexión automática | La app se conecta sola al último servidor al abrirse |
-| **Barra superior plegable** | La barra se pliega al texto «手柄» en su posición original; tócalo para expandirla hacia la derecha (300 ms) y otra vez para plegarla. Plegada ocupa una palabra y no intercepta toques del juego |
-| Arranque con un clic | El script del PC comprueba dependencias, limpia instancias previas, libera el puerto y arranca el receptor |
-| Juegos de prueba incluidos | 4 juegos de PC para probar el mando (plataformas / arena dual-stick / cámara / paseo 3D) |
+| Quieres jugar títulos con mando en PC y no tienes mando | El móvil hace de mando; `joy.cpl` y los juegos muestran *Xbox 360 Controller for Windows* |
+| Quieres 2–4 jugadores locales y faltan mandos | Hasta **cuatro móviles en un PC** (1P–4P), cada uno un mando independiente, vibración para cada jugador |
+| Apuntar con el stick se queda corto en shooters | **Aim por giroscopio**: gira el móvil y gira la cámara, se suma al stick derecho, sin deriva acumulada |
+| La disposición de otras apps no te encaja | 19 controles con posición / tamaño / opacidad individuales, cinco temas y modo claro / oscuro / sistema |
+| Quieres integrarlo en tus propios scripts | Protocolo UDP de 20 bytes con vectores de prueba compartidos, licencia MIT |
 
-## Por qué se reconoce siempre
+**No encaja en**: juegos de ritmo y fighters que exigen precisión de frame (la latencia Wi-Fi marca el
+límite), títulos antiguos solo DirectInput, ni equipos macOS / Linux.
 
-Los juegos leen mandos por **XInput** (`xinput1_4.dll`) o por el antiguo **DirectInput**. Un programa de usuario no puede inventar un dispositivo USB: por eso las herramientas comunes de mapeo solo imitan teclado/ratón. **ViGEmBus** es un driver de kernel (KMDF) con firma digital: le pide que conecte un mando de Xbox 360 a un bus virtual, el administrador PnP de Windows lo enumera y se asigna un slot XInput. A nivel de objetos del kernel es idéntico al hardware real, así que ningún juego puede distinguirlo. Cuando "no se reconoce", casi siempre es: driver sin instalar (o sin reiniciar tras instalarlo), receptor sin arrancar, o un juego solo-DirectInput.
+---
 
-> ViGEmBus se archivó el 2023-11-02 con la versión **1.22.0**. Es un driver maduro y estable; funciona bien en Windows 10/11 incluido 24H2.
+## En qué se diferencia de otras soluciones
 
-## Inicio rápido
+| Enfoque | El juego ve un mando real | Qué instala el PC | Sticks analógicos | Vibración de vuelta |
+| --- | --- | --- | --- | --- |
+| Mapeadores de teclado/ratón | ✗ solo nivel teclado | nada | ✗ | ✗ |
+| HID por Bluetooth del móvil | según el juego; suele requerir Steam Input | nada | ✓ | normalmente ✗ |
+| **Este proyecto** | **✓ XInput nativo** | driver offline de 876 KB, una sola vez | ✓ | ✓ |
 
-1. **Instalar ViGEmBus** (una vez): descárgalo de <https://github.com/nefarius/ViGEmBus/releases>, ejecútalo como administrador y **reinicia** el PC.
-2. **Arrancar el receptor**: doble clic en `一键启动.bat` (o `START-RECEIVER.bat`, mismo contenido). Comprueba Python y la librería `vgamepad` (la instala si falta), el driver, mata instancias previas y escucha en el UDP 26760. Permite el acceso en el firewall para redes privadas.
-3. **Compilar la app Android** (solo la primera vez): abre la carpeta `android/` en Android Studio, espera la sincronización de Gradle y pulsa *Build APK(s)*. Instala `app/build/outputs/apk/debug/app-debug.apk` en el teléfono.
-4. **Conectar**: teléfono y PC en la misma Wi-Fi. Toca el **texto «手柄»** arriba a la izquierda para expandir la barra, introduce la IPv4 del PC y el puerto `26760`, pulsa conectar. Después la app **se reconecta sola**. Toca el texto otra vez para plegarla. La barra de estado muestra `connected · 125 pps · P1`.
-5. **Verificar**: `Win+R` → `joy.cpl` debe mostrar "Xbox 360 Controller for Windows". Prueba sticks y botones en Propiedades.
-6. **Arrancar el juego** después del receptor (los juegos enumeran mandos al iniciar). En juegos de Steam, desactiva *Steam Input* para ese título.
+El coste es explícito: hace falta un **driver de kernel firmado** (ViGEmBus). Es un límite de Windows
+—el modo usuario no puede declarar «hay un mando conectado»—. Todo lo que un juego acepta de verdad
+tiene un driver detrás. Una vez instalado, cualquier juego XInput lo detecta **de forma nativa**.
 
-**Multijugador**: cada teléfono conectado toma el siguiente slot libre (P1–P4; XInput admite 4). Al reconectar conserva el número; la consola muestra estadísticas por jugador tipo `[1P] 125pps 0.8%`.
+---
 
-## Resumen del protocolo
+## Puntos destacados
 
-Los paquetes de entrada son **estado absoluto**, de 20 bytes, little-endian, a 125 Hz (≈2,5 KB/s):
-
-| Offset | Tamaño | Campo | Notas |
-| --- | --- | --- | --- |
-| 0 | 4 | magic | ASCII `VGP1` |
-| 4 | 1 | version | `1` |
-| 5 | 2 | buttons | máscara uint16: bit0=A, 1=B, 2=X, 3=Y, 4=LB, 5=RB, 6=BACK, 7=START, 8=L3, 9=R3, 10–13=cruceta, 14=GUIDE (disposición propia, NO coincide con `XINPUT_GAMEPAD.wButtons`; el receptor mapea bit a bit) |
-| 7 | 1 | sequence | 0–255, estadística de pérdida |
-| 8–15 | 8 | LX/LY/RX/RY | int16 ×4 (**LY positivo hacia arriba**) |
-| 16–17 | 2 | LT/RT | uint8 0–255 |
-| 18 | 2 | reserved | 0 |
-
-Canal de retorno (8 bytes, al puerto IPv4 fijo **26761** del teléfono): `VGPR` vibración (motores 0–255) y `VGPP` número de jugador (1–4).
-
-Detalles ya resueltos: el eje Y de pantalla está invertido respecto a XInput, los gatillos son sin signo (sueltos = 0) y la cruceta son 4 botones, no un POV hat. La capa táctil aplica una zona muerta radial del 6% re-normalizada para llegar a 32767 a tope. El receptor vacía la cola UDP y aplica solo el **último** paquete de cada teléfono: la latencia se mantiene constante, sin "deriva" por paquetes viejos.
-
-## Ajustes
-
-| Qué | Dónde |
+| Capacidad | Detalle |
 | --- | --- |
-| Girosocopio on/off, sensibilidad, invertir pitch/yaw | App → engranaje → sección del stick derecho (instantáneo) |
-| Posición / tamaño / opacidad de controles | App → engranaje → editor de layout: toca un control, arrastra; el deslizador alterna tamaño/opacidad |
-| Puerto del receptor | `python server.py 26761` (cámbialo también en la app) |
-| Velocidades del giroscopio | `GyroAim.kt`: `MAX_YAW_RATE / MAX_PITCH_RATE` |
+| Dispositivo real, no un mapeo | Dispositivo de bus virtual a nivel de kernel; la enumeración XInput es indistinguible del hardware, sticks de 16 bits y gatillos de 8 bits |
+| Multijugador local 1P–4P | Ranuras asignadas por IP de origen, la numeración sobrevive a reconexiones, vibración al móvil correcto |
+| Aim por giroscopio | Orientación fusionada (`Game Rotation Vector`, 50 Hz), se suma al stick derecho; inversión de cabeceo y giro independiente |
+| Dos sensibilidades independientes | «Cámara por giroscopio» y «cámara por stick derecho» son ajustes 0–100 separados que no se afectan |
+| Vibración de vuelta | `XInputSetState` del juego → callback del driver → vibración del móvil, con intensidad / duración / intervalo mínimo |
+| Conjunto completo de botones | ABXY, LB/RB, LT/RT (0–255 analógicos), cruceta, `☰` Menú, `X` Home, L3/R3 — 19 controles |
+| Tres modos de pulsación del stick | Tocar el centro / doble toque dentro del stick / mantener al operarlo; empujar el stick nunca pulsa por error |
+| Edición de disposición por control | Posición / tamaño (50%–500%) / opacidad / visibilidad, guardado automático; oculto no dibuja ni recibe toques |
+| Interfaz Material 3 + neumorfismo | Cinco paletas de baja saturación con transición de fondo de 480 ms, claro / oscuro / sistema, animación de pulsación |
+| Barra superior plegable | Se recoge en una píldora «手柄»; al expandirse difumina el mando en vivo y muestra un panel de cristal esmerilado |
+| Conexión autorreparable | Cortes de Wi-Fi y reinicios del receptor se recuperan con retroceso — **~1 s** medido tras reiniciar el PC |
+| Listo para usar | El paquete portable incluye receptor, APK y driver offline; sin necesidad de Python |
 
-Leyenda de la consola: `[监听]` escuchando · `[连接]` teléfono conectado · `[1P] 125pps 0.8%` tasa/pérdida por jugador · `[超时]` sin paquetes, entradas neutralizadas.
+---
 
-## Juegos de prueba (`game/`)
+## Tres pasos para jugar
 
-Todos leen XInput directamente con ctypes (la misma ruta de API que un juego real; pygame solo dibuja). Cada uno admite `--selftest`.
+**1 · Descomprime el paquete portable**
 
-| Juego | Qué prueba |
+```
+VirtualGamepadReceiver-Portable/
+├─ VirtualGamepadReceiver.exe     Receptor de PC (portable, doble clic)
+├─ 手机端/VirtualGamepad-v1.1.0-debug.apk    App del móvil
+├─ 可选驱动/ViGEmBusSetup_x64.msi            Driver offline de 876 KB
+└─ 使用说明.txt
+```
+
+**2 · Instala el driver una vez**
+
+Clic derecho en `可选驱动/ViGEmBusSetup_x64.msi` → ejecutar como administrador → **reinicia**.
+Es un driver de kernel, así que solo se carga tras reiniciar. No hay que repetirlo.
+
+**3 · Conecta el móvil**
+
+Instala el APK de `手机端/`, únete a la misma Wi-Fi que el PC, toca la píldora «手柄» arriba a la
+izquierda, introduce la IPv4 del PC y el puerto `26760`, y conecta. Ver `已连接 · 250 pps · 1P`
+significa que el enlace está activo.
+
+> La lista paso a paso está en **[QUICKSTART.md](QUICKSTART.md)** (chino); compilar desde código,
+> el receptor de referencia en C# y el arranque manual están en **[docs/TECHNICAL.md](docs/TECHNICAL.md)**.
+> Permite UDP 26760 entrante en **redes privadas** cuando aparezca el aviso del firewall de Windows.
+
+---
+
+## Por qué el juego lo trata como un mando real
+
+Windows expone dos rutas distintas: **XInput** (`xinput1_4.dll`, usada por casi todos los juegos con
+mando desde 2006) y la más antigua **DirectInput**. Un programa en modo usuario no puede fabricar un
+dispositivo USB, y por eso los mapeadores de teclas se quedan en ese nivel.
+
+**ViGEmBus** es un driver de bus KMDF firmado: el modo usuario le pide por IOCTL que conecte un mando
+de Xbox 360 en un bus virtual, Windows PnP lo enumera y asigna una ranura XInput. El dispositivo
+aparece en el Administrador de dispositivos, `XInputGetState(0, …)` devuelve éxito y la estructura que
+recibe el juego es idéntica a la del hardware.
+
+**A nivel de objeto del kernel no existe forma de distinguirlo.** Los «no me lo reconoce» suelen ser
+driver ausente, PC sin reiniciar, receptor no iniciado o un juego solo DirectInput.
+
+> ViGEmBus se archivó el 2023-11-02 en la versión 1.22.0. Es un driver maduro de propósito único y
+> funciona en Windows 10/11 incluido 24H2; **la versión 1.17.333 incluida en este paquete también sirve**,
+> no hace falta perseguir la última.
+
+---
+
+## Capacidad y límites
+
+| Elemento | Medido / especificación |
 | --- | --- |
-| `xbox_platformer.py` | Velocidad analógica + salto cargado, A/X/B/Y, recorrido de gatillos, HUD de entrada, 3 niveles |
-| `twin_stick.py` | Mover con stick izquierdo + apuntar/disparar con el derecho **a la vez**, oleadas, bombas |
-| `look_test.py` | Cámara directa por frame (sin suavizado), brújula, clase `LookCamera` portable |
-| `fps_walk.py` | Doble stick estilo FPS (andar + mirar), sprint con RT, anillos objetivo, minimapa |
+| Transporte | UDP unicast por Wi-Fi, 20 bytes fijos a **250 Hz**, ~5 KB/s |
+| Latencia | 10–20 ms típicos en LAN; ~35–50 ms contando muestreo táctil y un frame |
+| Móviles simultáneos | hasta 4 (límite de ranuras XInput) |
+| Cubre | todo lo que use XInput — Steam, Epic, UE, Unity, RE Engine, RPCS3, Yuzu, RetroArch… |
+| No cubre | juegos antiguos solo DirectInput, anticheats que limitan dispositivos virtuales, equipos no Windows |
+| Verificación | 22/22 comprobaciones en la capa XInput, 13 botones con su bit exacto, 250 pps sin huecos de secuencia |
 
-## Solución de problemas (lo más común)
+Seguridad y cumplimiento: instala el driver solo desde la fuente oficial o este paquete; evita los
+«todo en uno» de terceros. Los dispositivos de entrada virtual son válidos en un jugador y cooperativo,
+pero **algunos anticheats competitivos los restringen**; revisa los términos del juego antes de usarlo.
+Todo el tráfico se queda en tu equipo y tu LAN, sin servidores de terceros.
 
-| Síntoma | Solución |
+---
+
+## Documentación
+
+| Qué quieres saber | Dónde |
 | --- | --- |
-| "No se puede cargar ViGEmBus" | Reinstala 1.22.0 y **reinicia** |
-| No aparece en `joy.cpl` | Revisa la consola del receptor; añade excepción en el antivirus |
-| El teléfono dice "conectado" pero el PC no registra nada | Firewall / aislamiento AP: permite UDP 26760 entrante |
-| Funciona en `joy.cpl` pero no en el juego | Juego solo-DirectInput o entrada mal configurada |
-| Un eje del giroscopio invertido | Usa los interruptores de inversión en la app |
-| Pulsaciones dobles | Cierra DS4Windows / x360ce / vJoy |
-| Retrasos | Wi-Fi de 5 GHz o hotspot del teléfono |
+| Pasos y bloqueos habituales | [QUICKSTART.md](QUICKSTART.md) |
+| Interioridades, formato del paquete, mapeo de botones, ajuste, diagnóstico | [docs/TECHNICAL.md](docs/TECHNICAL.md) |
+| Especificación del protocolo y vectores de prueba | [docs/PROTOCOL.md](docs/PROTOCOL.md) · [VGP1](protocol/test_vectors.json) / [VGP2](protocol/test_vectors_v2.json) |
+| Registro de aceptación extremo a extremo (22 puntos) | [docs/FUNCTIONAL-ACCEPTANCE-2026-11-06.md](docs/FUNCTIONAL-ACCEPTANCE-2026-11-06.md) |
+| Por qué el driver es inevitable | [docs/DRIVER-ANALYSIS-2026-11-06.md](docs/DRIVER-ANALYSIS-2026-11-06.md) |
+| Implementación de la vibración (y su interbloqueo de handle) | [docs/RUMBLE-2026-11-06.md](docs/RUMBLE-2026-11-06.md) |
+| Causa raíz del «reconectando» sin fin | [docs/CONNECTION-FIX-2026-11-06.md](docs/CONNECTION-FIX-2026-11-06.md) |
+| Auditorías e informes de pruebas | [docs/AUDIT.md](docs/AUDIT.md) · [docs/CODE-AUDIT-2026-11-04.md](docs/CODE-AUDIT-2026-11-04.md) · [docs/TEST-REPORT.md](docs/TEST-REPORT.md) |
 
-Tablas completas: [README en chino](README.md) (§12) y `QUICKSTART.md`.
+En `game/` hay cuatro juegos de prueba que leen XInput directamente y ejercitan recorrido de sticks,
+profundidad de gatillos y ambos sticks a la vez.
 
-## Ampliaciones
-
-1. **Transporte USB**: `adb forward tcp:26760 tcp:26760` + TCP con el mismo protocolo.
-2. **Descubrimiento en LAN**: latido del receptor para autocompletar la IP en la app.
-3. **Backend DirectInput** (vJoy) para juegos antiguos.
-4. **EXE independiente**: `pyinstaller --onefile --collect-all vgamepad server.py` genera un receptor sin Python.
+---
 
 ## Licencia
 
-MIT — ver [LICENSE](LICENSE). La capa de dispositivo virtual depende de [ViGEmBus](https://github.com/nefarius/ViGEmBus) (BSD-3-Clause) y [Nefarius.ViGEm.Client](https://www.nuget.org/packages/Nefarius.ViGEm.Client) (MIT); conserva sus avisos de licencia al redistribuir.
+MIT — ver [LICENSE](LICENSE). Los componentes de terceros mantienen sus términos:
+[ViGEmBus](https://github.com/nefarius/ViGEmBus) (BSD-3-Clause) ·
+[Nefarius.ViGEm.Client](https://www.nuget.org/packages/Nefarius.ViGEm.Client) (MIT) ·
+[vgamepad](https://pypi.org/project/vgamepad/) (MIT) ·
+[pygame](https://www.pygame.org/) (LGPL) ·
+Material Components for Android / Kotlin / AndroidX (Apache-2.0)

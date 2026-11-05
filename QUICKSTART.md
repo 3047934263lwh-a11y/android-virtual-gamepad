@@ -1,10 +1,14 @@
 # 快速上手（照着做就行）
 
-> **日常使用只需三步：双击 `一键启动.bat` → 手机打开 App（自动连接）→ 开游戏。**
-> 下面是完整流程与每一步的验证方法。
+> **拿到便携包的人：只需三步——装一次驱动（包内离线 MSI）→ 双击 `VirtualGamepadReceiver.exe`
+> → 手机打开 App 连接。** 不需要 Python，也不需要编译任何东西，下面的第 0、1 步可以跳过。
 
-这是一份按顺序执行的清单。全程只有一处需要"动手折腾"（编译安卓 App，
-只在首次或改代码后需要），其余都是双击和点选。
+这份文档覆盖两条路径，按你的情况只看其中一条：
+
+| 你的情况 | 看哪几节 |
+| --- | --- |
+| 只想用起来（下载了 Release 里的便携包） | 开头的三步 + 第 2 步（手机连接）+ 第 3 步（验证） |
+| 要用源码跑、或自己编译 APK | 全部，尤其第 0 步（Python / vgamepad）与第 1 步（Android Studio） |
 
 ---
 
@@ -12,12 +16,14 @@
 
 | 检查项 | 怎么确认 |
 | --- | --- |
-| ViGEmBus 1.22.0 内核驱动 | 设备管理器 → 系统设备 → 出现 `Virtual Gamepad Emulation Bus`（未装看第 1 步） |
-| Python 3.8+ | 命令行 `python --version` 有输出 |
-| vgamepad 库 | `python -c "import vgamepad"` 无报错（没有就 `pip install vgamepad`） |
+| ViGEmBus 内核驱动 | 设备管理器 → 系统设备 → 出现 `Virtual Gamepad Emulation Bus`（未装看第 1 步） |
+| Python 3.8+ | 命令行 `python --version` 有输出（**仅源码方式需要**） |
+| vgamepad 库 | `python -c "import vgamepad"` 无报错（**仅源码方式需要**，没有就 `pip install vgamepad`） |
 
-> 没装 ViGEmBus？从官方仓库下载 <https://github.com/nefarius/ViGEmBus/releases>，
+> 没装 ViGEmBus？直接用便携包里的 `可选驱动/ViGEmBusSetup_x64.msi`（876 KB，离线、不联网），
 > 管理员身份安装后**重启电脑**（驱动需重启才加载，这一步最容易被跳过）。
+> 也可以从官方仓库 <https://github.com/nefarius/ViGEmBus/releases> 下载，但**不必追最新版**：
+> 1.17.333 及以上实测可用。
 
 ---
 
@@ -158,10 +164,10 @@ Xbox 360 Controller for Windows
 | 现象 | 原因 | 怎么办 |
 | --- | --- | --- |
 | 双击 bat 一闪而过 | 没装 Python | 到 python.org 装 Python 3，勾选 Add to PATH |
-| 接收端报"创建虚拟手柄失败" | ViGEmBus 没装好 | 重装 1.22.0 并**重启电脑** |
+| 接收端报"创建虚拟手柄失败" | ViGEmBus 没装好 | 用包内离线 MSI 重装并**重启电脑** |
 | 手机显示已连接但电脑窗口没反应 | 防火墙拦了 | 放行 UDP 26760 入站；确认同一个 Wi-Fi |
 | `joy.cpl` 里没有 Xbox 360 控制器 | 设备没创建 | 看接收端是否就绪；关掉杀软拦截 |
-| `joy.cpl` 有反应，游戏没反应 | 游戏走 DirectInput 或没切手柄 | 游戏设置里改成"控制器"；老游戏见 README 10.1 |
+| `joy.cpl` 有反应，游戏没反应 | 游戏走 DirectInput 或没切手柄 | 游戏设置里改成"控制器"；老游戏见 [docs/TECHNICAL.md](docs/TECHNICAL.md) 10.1 |
 | 摇杆上下颠倒 | Y 轴未取反 | 不该发生；若改过代码，检查 `setStick()` 的 `-ny` |
 | 陀螺仪方向反了 | 体感约定差异 | App 设置里拨「俯仰反向」/「左右反向」开关 |
 | 按一下触发两次 | 多个虚拟手柄软件并存 | 关掉 DS4Windows / x360ce / vJoy |
@@ -169,7 +175,7 @@ Xbox 360 Controller for Windows
 | 手机连不上，提示无法解析地址 | IP 填错或不在同一网段 | 电脑 `ipconfig` 重新确认 IPv4 地址 |
 | 第二个接收端秒退 | 端口被旧实例占用 | 用 `一键启动.bat`（自动清理残留实例） |
 
-更多原理与协议细节见 [README.md](README.md)。
+更多原理与协议细节见 [docs/TECHNICAL.md](docs/TECHNICAL.md)；项目概览见 [README.md](README.md)。
 
 ---
 
