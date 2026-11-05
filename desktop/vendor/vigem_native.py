@@ -63,6 +63,7 @@ WAIT_OBJECT_0 = 0x00000000
 ERROR_IO_PENDING = 997
 ERROR_OPERATION_ABORTED = 995
 ERROR_ACCESS_DENIED = 5
+ERROR_INVALID_PARAMETER = 87
 
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 GENERIC_READ = 0x80000000
@@ -196,6 +197,14 @@ _serial_lock = threading.Lock()
 _serial_next = 1
 
 
+def _alloc_serial() -> int:
+    global _serial_next
+    with _serial_lock:
+        s = _serial_next & 0xFFFFFFF
+        _serial_next += 1
+        return s
+
+
 class _Client:
     """探测用客户端对象（vigem_alloc 返回）。"""
 
@@ -296,16 +305,9 @@ class VX360Gamepad:
     """vgamepad.VX360Gamepad 的协议级替代实现。"""
 
     def __init__(self):
-        global _serial_next
         self._client = _BUS.ensure()
-        with _serial_lock:
-            self.serial = _serial_next & 0xFFFFFFF
-            _serial_next += 1
-        plug = VIGEM_PLUGIN_TARGET()
-        plug.Size = ctypes.sizeof(plug)
-        plug.SerialNo = self.serial
-        plug.TargetType = TARGET_XBOX360_WIRED
-        _ioctl(self._client, IOCTL_VIGEM_PLUGIN_TARGET, plug)
+        self.serial = _alloc_serial()
+        self._plug_with_retry()
         ready = VIGEM_WAIT_DEVICE_READY()
         ready.Size = ctypes.sizeof(ready)
         ready.SerialNo = self.serial
@@ -319,6 +321,35 @@ class VX360Gamepad:
         self._notif_stop = None
         self._notif_handle = None
         self._notif_userdata = None
+
+    # ---- 插件 ----
+    def _plug_with_retry(self, attempts: int = 4) -> None:
+        """PLUGIN_TARGET 失败时清理同名僵尸目标并换号重试。
+
+        进程被强杀/崩溃会留下「已插件但无人持有」的目标，其 SerialNo 仍被
+        驱动占用；此后新的 PLUGIN_TARGET 会返回 ERROR_INVALID_PARAMETER(87)。
+        若直接抛出，接收端就无法创建手柄，进而连 VGPP 都不回，手机端会永久
+        停在「正在自动重连」——故必须在此自愈。
+        """
+        last = None
+        for _ in range(attempts):
+            plug = VIGEM_PLUGIN_TARGET()
+            plug.Size = ctypes.sizeof(plug)
+            plug.SerialNo = self.serial
+            plug.TargetType = TARGET_XBOX360_WIRED
+            try:
+                _ioctl(self._client, IOCTL_VIGEM_PLUGIN_TARGET, plug)
+                return
+            except OSError as exc:
+                last = exc
+                code = exc.args[0] if exc.args else 0
+                if code != ERROR_INVALID_PARAMETER:
+                    raise
+                vigem_target_remove(self._client, self.serial)
+                self.serial = _alloc_serial()
+        if last is not None:
+            raise last
+        raise OSError(VIGEM_ERROR_TARGET_UNEXPECTED)
 
     # ---- vgamepad 兼容属性 ----
     @property

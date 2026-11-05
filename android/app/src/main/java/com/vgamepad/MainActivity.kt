@@ -131,7 +131,14 @@ class MainActivity : AppCompatActivity() {
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private val uiHandler = Handler(Looper.getMainLooper())
-    private val reconnectTask = Runnable { attemptReconnect() }
+    /** 是否已有待执行的重连任务。看门狗每 500ms 会调用 scheduleReconnect()，
+     *  若每次都 removeCallbacks + postDelayed(backoff≥2000ms)，任务会在到期前
+     *  被反复推迟，永远不执行 —— 表现为「一直显示正在自动重连、却永不发起连接」。 */
+    private var reconnectScheduled = false
+    private val reconnectTask = Runnable {
+        reconnectScheduled = false
+        attemptReconnect()
+    }
     private val watchdog = object : Runnable {
         override fun run() {
             checkLink()
@@ -1478,9 +1485,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun scheduleReconnect(delayMs: Long = -1L) {
         if (userStopped || !resumed) return
+        // 已有待执行的重连（隐式延时）就不再重置，否则看门狗会把任务无限推迟
+        if (reconnectScheduled && delayMs < 0L) return
         uiHandler.removeCallbacks(reconnectTask)
         val backoff = 2000L shl (autoRetryCount.coerceAtMost(3))
         val d = if (delayMs >= 0) delayMs else backoff.coerceAtMost(15000L)
+        reconnectScheduled = true
         uiHandler.postDelayed(reconnectTask, d)
         renderStatus()
     }
@@ -1504,6 +1514,16 @@ class MainActivity : AppCompatActivity() {
         if (userStopped || !resumed) return
         if (!sender.isRunning) {
             scheduleReconnect()
+            return
+        }
+        // 兜底：发送线程理应 250Hz 发包。若 3 秒没有任何成功发送，
+        // 说明线程已死或 socket 失效，但 running 仍为 true——
+        // 此时 attemptReconnect() 会因 isRunning 永久早退，链路无法自愈。
+        val lastSend = sender.lastSendAt
+        if (lastSend > 0L && SystemClock.elapsedRealtime() - lastSend > 3000L) {
+            sender.stop()
+            scheduleReconnect(500L)
+            renderStatus()
             return
         }
         // 曾连上过却长时间再无回包：多半是 PC 接收端重启或 Wi-Fi 切换，

@@ -96,6 +96,11 @@ class UdpSender(private val state: GamepadState) {
 
     val isRunning: Boolean get() = running
 
+    /** 最近一次成功发出的时间（elapsedRealtime）。看门狗据此识别「线程活着但发不出去」。 */
+    @Volatile
+    var lastSendAt: Long = 0L
+        private set
+
     /** 启动发送。主机名解析与套接字创建都在工作线程内完成，
      *  避免主线程 DNS 触发 NetworkOnMainThreadException。 */
     fun start(host: String, port: Int, listener: Listener): Boolean {
@@ -244,6 +249,7 @@ class UdpSender(private val state: GamepadState) {
         var count = 0
         var windowStart = System.nanoTime()
         var lastErrorAt = 0L
+        var lastOkAt = System.nanoTime()
 
         listener?.let { l -> main.post { l.onConnected(address.hostAddress ?: "", port) } }
 
@@ -253,6 +259,8 @@ class UdpSender(private val state: GamepadState) {
                 sock.send(DatagramPacket(bytes, PACKET_SIZE, address, port))
                 sequence.incrementAndGet()
                 count++
+                lastOkAt = System.nanoTime()
+                lastSendAt = android.os.SystemClock.elapsedRealtime()
             } catch (e: Exception) {
                 if (!running || gen != generation.get()) break
                 val now = System.nanoTime()
@@ -261,6 +269,11 @@ class UdpSender(private val state: GamepadState) {
                     val msg = e.message ?: e.javaClass.simpleName
                     listener?.let { l -> main.post { l.onError("发送失败：$msg") } }
                 }
+                // 持续 1.5 秒发不出去（Wi-Fi 漫游、热点切换、socket 被系统回收）：
+                // 必须退出循环让 onStopped → scheduleReconnect 重建 socket。
+                // 若继续空转，running 恒为 true，attemptReconnect() 会因
+                // sender.isRunning 早退，表现为「一直显示正在重连且不发包」。
+                if (now - lastOkAt > 1_500_000_000L) break
             }
 
             val now = System.nanoTime()
@@ -287,6 +300,9 @@ class UdpSender(private val state: GamepadState) {
         // 自己持有的 socket 由自己关闭：即使 stop() 时序交错也不会泄漏
         runCatching { sock.close() }
         if (socket === sock) socket = null
+        // 仅当代次仍属于当前会话时才清 running：避免旧线程退出时
+        // 覆盖掉刚由 start() 建立的新会话状态。
+        if (gen == generation.get()) running = false
         listener?.let { l -> main.post { l.onStopped() } }
     }
 

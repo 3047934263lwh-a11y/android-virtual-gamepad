@@ -389,10 +389,14 @@ class Receiver(QObject):
                             try:
                                 pad = self._make_pad(idx, sock)
                             except Exception as exc:      # noqa: BLE001
-                                free_slots.insert(0, idx)
-                                free_slots.sort()
-                                throttled("pad", "error", f"创建 {idx + 1}P 虚拟手柄失败：{exc}", 3.0)
-                                continue
+                                # 仍要注册玩家并回 VGPP：否则手机端无法区分
+                                # 「PC 未启动」与「手柄创建失败」，会无限重连
+                                pad = None
+                                throttled(
+                                    "pad", "error",
+                                    f"创建 {idx + 1}P 虚拟手柄失败，已降级为仅监听：{exc}",
+                                    3.0,
+                                )
                         else:
                             pad = None
                         p = _Player(idx, pad, addr)

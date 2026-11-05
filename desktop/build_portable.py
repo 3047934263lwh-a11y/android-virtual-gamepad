@@ -176,6 +176,29 @@ def assemble() -> None:
             )
 
 
+    # 手机端 APK 随包：早期 v1.0.x 便携包即内含 APK，解压后无需再单独下载
+    apk_src = os.path.abspath(os.path.join(
+        ROOT, "..", "android", "app", "build", "outputs", "apk", "debug",
+        "app-debug.apk"))
+    if os.path.isfile(apk_src):
+        phone_dir = os.path.join(OUT, "手机端")
+        os.makedirs(phone_dir, exist_ok=True)
+        shutil.copy2(apk_src, os.path.join(phone_dir,
+                                           "VirtualGamepad-v1.1.0-debug.apk"))
+        with open(os.path.join(phone_dir, "安装说明.txt"), "w",
+                  encoding="utf-8-sig") as fh:
+            fh.write(
+                "安装步骤\n"
+                "1. 把 VirtualGamepad-v1.1.0-debug.apk 传到安卓手机并安装\n"
+                "   （首次安装需在系统里允许「安装未知来源应用」）。\n"
+                "2. 手机与电脑连同一个 Wi-Fi。\n"
+                "3. 电脑上运行 VirtualGamepadReceiver.exe，点 START。\n"
+                "4. 手机打开 App，把 IP 填成电脑的局域网地址（接收端界面左上角显示），\n"
+                "   端口保持 26760，状态条变绿即已连接。\n"
+                "说明：这是 debug 签名包，可直接安装；如需正式签名请自行重打包。\n"
+            )
+
+
 def verify() -> None:
     must = [
         EXE,
