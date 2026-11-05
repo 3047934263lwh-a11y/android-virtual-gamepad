@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from style import HEADER_H, INK, LINE, MUTED, RED, WHITE, font
+from style import HEADER_H, INK, LINE, MUTED, PAPER, RED, WHITE, font
 
 
 class Block(QWidget):
@@ -44,20 +44,21 @@ class WindowButton(QAbstractButton):
         self.setFixedSize(self.WIDTH, HEADER_H)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.setToolTip({
-            "min": "最小化   MINIMIZE",
-            "max": "最大化   MAXIMIZE",
-            "close": "关闭   CLOSE",
-        }[kind])
-        self.setAccessibleName(self.toolTip())
+        # 不在悬停时弹出「最小化 / 还原 / 关闭」文字提示；
+        # 名称只保留给屏幕阅读器等无障碍通道。
+        labels = {
+            "min": "最小化",
+            "max": "最大化",
+            "close": "关闭",
+        }
+        self.setAccessibleName(labels[kind])
 
     def set_restore(self, restore: bool) -> None:
         """窗口最大化时把图标切换成「还原」。"""
         if self.kind != "max" or self._restore == restore:
             return
         self._restore = restore
-        self.setToolTip("还原   RESTORE" if restore else "最大化   MAXIMIZE")
-        self.setAccessibleName(self.toolTip())
+        self.setAccessibleName("还原" if restore else "最大化")
         self.update()
 
     def paintEvent(self, event) -> None:      # noqa: N802
@@ -154,6 +155,42 @@ class TitleBar(Block):
             event.accept()
         else:
             super().mouseDoubleClickEvent(event)
+
+
+class SlotStrip(QWidget):
+    """玩家槽位：4 个等宽方格，1px 发丝分区，占用时以信号色填充。
+
+    Uiverse Grid 风格：层级由格与色块表达，不用卡片、圆角或阴影。
+    """
+
+    def __init__(self, count: int = 4, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("slotStrip")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setFixedHeight(56)
+        self._count = count
+        self._active: set[int] = set()
+
+    def set_slots(self, rows: list[dict]) -> None:
+        active = {int(r["slot"]) for r in rows}
+        if active != self._active:
+            self._active = active
+            self.update()
+
+    def paintEvent(self, event) -> None:      # noqa: N802
+        p = QPainter(self)
+        w, h = self.width(), self.height()
+        cw = w / self._count
+        for i in range(self._count):
+            cell = QRectF(i * cw, 0, cw, h)
+            on = (i + 1) in self._active
+            p.fillRect(cell, QColor(RED if on else PAPER))
+            p.setPen(QPen(QColor(LINE), 1))
+            p.drawRect(cell.adjusted(0.5, 0.5, -0.5, -0.5))
+            p.setPen(QColor(WHITE if on else MUTED))
+            p.setFont(font(9, bold=True, tracking=1.0))
+            p.drawText(cell, Qt.AlignmentFlag.AlignCenter, f"P{i + 1}")
+        p.end()
 
 
 def rule(vertical: bool = False) -> QFrame:

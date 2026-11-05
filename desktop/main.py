@@ -62,7 +62,7 @@ from style import (  # noqa: E402
     STATUSBAR_H, UNIT, WHITE, font,
 )
 from widgets import (  # noqa: E402
-    Block, DataTable, KeyValue, LogView, Metric, StickScope,
+    Block, DataTable, KeyValue, LogView, Metric, SlotStrip, StickScope,
     TitleBar, WindowButton, rule, section,
 )
 
@@ -137,7 +137,7 @@ class MainWindow(QMainWindow):
         self._selftest_thread: threading.Thread | None = None
         self._selftest_stop = threading.Event()
 
-        self._build_ui()
+        self._build_minimal_ui()
         self._bind_signals()
         self._bind_shortcuts()
         self._load_settings()
@@ -146,7 +146,7 @@ class MainWindow(QMainWindow):
         self._set_running_ui(False)
         self._log("info", f"本机局域网地址 {local_ip()}，手机与 PC 需接入同一网络")
         self._log("info", "协议 VGP1 v1 · 20 字节报文 · 最多 4 台设备")
-        self._log("info", "按 CTRL+S 或点击左侧按钮开始监听")
+        self._log("info", "按 CTRL+S 或点击下方按钮开始监听")
 
         if self.selftest_dir:
             QTimer.singleShot(180, self._selftest_start)
@@ -200,17 +200,10 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(32, 0, 0, 0)
         lay.setSpacing(16)
 
-        brand_box = QVBoxLayout()
-        brand_box.setSpacing(2)
         brand = QLabel("VIRTUAL GAMEPAD")
         brand.setObjectName("brand")
         brand.setFont(font(17, bold=True, tracking=1.4))
-        sub = QLabel("PC RECEIVER  /  桌面接收端  /  VGP1")
-        sub.setObjectName("brandSub")
-        sub.setFont(font(8, tracking=1.2))
-        brand_box.addWidget(brand)
-        brand_box.addWidget(sub)
-        lay.addLayout(brand_box)
+        lay.addWidget(brand)
         lay.addStretch(1)
 
         self.header_chip = Block("stateChipIdle")
@@ -220,11 +213,6 @@ class MainWindow(QMainWindow):
         self.header_state.setObjectName("headerState")
         self.header_state.setFont(font(9, bold=True, tracking=1.4))
         lay.addWidget(self.header_state)
-        lay.addSpacing(24)
-        meta = QLabel(f"PORTABLE  ·  v{APP_VERSION}")
-        meta.setObjectName("headerMeta")
-        meta.setFont(font(8, tracking=1.0))
-        lay.addWidget(meta)
         lay.addSpacing(24)
 
         controls = QHBoxLayout()
@@ -404,6 +392,169 @@ class MainWindow(QMainWindow):
         keys.setFont(font(8))
         lay.addWidget(keys)
         return s
+
+    # ---------- 精简界面（Uiverse Grid 设计系统） ----------
+
+    def _build_minimal_ui(self) -> None:
+        """单一网格承载全部可见元素：1px 发丝分区，层级由跨格与字号建立，
+        无卡片、无圆角、无阴影、无浮动元素。"""
+        central = Block("central")
+        root = QVBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        self.setCentralWidget(central)
+
+        root.addWidget(self._build_header())
+
+        body = Block("body")
+        bl = QHBoxLayout(body)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(0)
+        bl.addWidget(self._grid_connection(), 3)
+        bl.addWidget(self._grid_devices(), 2)
+        root.addWidget(body, 1)
+
+        root.addWidget(self._build_footer())
+        self._hidden_compat()
+
+    def _grid_connection(self) -> QWidget:
+        cell = Block("gridCell")
+        lay = QVBoxLayout(cell)
+        lay.setContentsMargins(32, 24, 32, 24)
+        lay.setSpacing(0)
+
+        head = QLabel("01　CONNECTION")
+        head.setObjectName("section")
+        head.setFont(font(8, bold=True, tracking=1.2))
+        lay.addWidget(head)
+        lay.addWidget(rule())
+        lay.addSpacing(24)
+
+        lab = QLabel("HOST ADDRESS  ·  在手机 App 中填写")
+        lab.setObjectName("fieldLabel")
+        lab.setFont(font(8, bold=True, tracking=0.8))
+        lay.addWidget(lab)
+        lay.addSpacing(12)
+
+        addr_row = QHBoxLayout()
+        addr_row.setSpacing(12)
+        self.address_ip = QLabel(local_ip())
+        self.address_ip.setObjectName("address")
+        self.address_ip.setFont(font(27, bold=True, mono=True))
+        self.address_port = QLabel(f":{DEFAULT_PORT}")
+        self.address_port.setObjectName("addressPort")
+        self.address_port.setFont(font(15, mono=True))
+        addr_row.addWidget(self.address_ip)
+        addr_row.addWidget(self.address_port)
+        addr_row.addStretch(1)
+        lay.addLayout(addr_row)
+        lay.addSpacing(12)
+
+        copy = QPushButton("COPY  复制地址")
+        copy.setObjectName("copyBtn")
+        copy.setFixedWidth(132)
+        copy.setCursor(Qt.CursorShape.PointingHandCursor)
+        copy.clicked.connect(self._copy_address)
+        lay.addWidget(copy)
+        lay.addStretch(1)
+
+        self.toggle_btn = QPushButton("开始监听   START")
+        self.toggle_btn.setObjectName("primary")
+        self.toggle_btn.setFont(font(11, bold=True, tracking=1.0))
+        self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.toggle_btn.clicked.connect(self.toggle_listen)
+        lay.addWidget(self.toggle_btn)
+        return cell
+
+    def _grid_devices(self) -> QWidget:
+        cell = Block("gridCellLast")
+        lay = QVBoxLayout(cell)
+        lay.setContentsMargins(32, 24, 32, 24)
+        lay.setSpacing(0)
+
+        head = QLabel("02　DEVICES")
+        head.setObjectName("section")
+        head.setFont(font(8, bold=True, tracking=1.2))
+        lay.addWidget(head)
+        lay.addWidget(rule())
+        lay.addSpacing(24)
+
+        lab = QLabel("CONNECTED  ·  最多 4 台")
+        lab.setObjectName("fieldLabel")
+        lab.setFont(font(8, bold=True, tracking=0.8))
+        lay.addWidget(lab)
+        lay.addSpacing(8)
+
+        self.device_number = QLabel("0 / 4")
+        self.device_number.setObjectName("bigNumber")
+        self.device_number.setFont(font(54, bold=True))
+        lay.addWidget(self.device_number)
+        lay.addStretch(1)
+
+        self.slot_strip = SlotStrip()
+        lay.addWidget(self.slot_strip)
+        return cell
+
+    def _build_footer(self) -> QWidget:
+        bar = Block("footer")
+        bar.setFixedHeight(STATUSBAR_H)
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(32, 0, 32, 0)
+        lay.setSpacing(10)
+        self.status_error = QLabel("")
+        self.status_error.setObjectName("statusError")
+        self.status_error.setFont(font(9))
+        lay.addWidget(self.status_error, 1)
+        return bar
+
+    def _copy_address(self) -> None:
+        QApplication.clipboard().setText(
+            f"{self.address_ip.text()}:{self.address_port.text().lstrip(':')}")
+
+    def _hidden_compat(self) -> None:
+        """保留既有业务对象与自动化断言所需的数据容器，但不进入任何布局。
+        逐帧数据、指标、日志、配置等仍在内存中维护，界面不再呈现。"""
+        holder = QWidget(self)
+        holder.hide()
+        self._compat_holder = holder
+
+        def park(widget):
+            widget.setParent(holder)
+            return widget
+
+        self.port_edit = QLineEdit(str(DEFAULT_PORT), holder)
+        self.port_edit.setObjectName("portEdit")
+        self.port_edit.setValidator(QIntValidator(1, 65535, self.port_edit))
+        self.port_edit.returnPressed.connect(self.start_listen)
+
+        self.auto_cb = QCheckBox("auto", holder)
+        self.vigem_cb = QCheckBox("vigem", holder)
+        self.debug_cb = QCheckBox("debug", holder)
+
+        self.alert = Block("alertBar", holder)
+        self.alert_text = QLabel("", holder)
+        self.alert_text.setObjectName("alertText")
+        dismiss = QPushButton("DISMISS", self.alert)
+        dismiss.setObjectName("alertDismiss")
+        dismiss.clicked.connect(self.alert.hide)
+
+        self.log_view = park(LogView())
+        self.table = park(DataTable())
+        self.scope_l = park(StickScope(""))
+        self.scope_r = park(StickScope(""))
+        self.m_pps = park(Metric("", "", "0"))
+        self.m_loss = park(Metric("", "", "0.0%"))
+        self.m_online = park(Metric("", "", "0"))
+        self.m_uptime = park(Metric("", "", "00:00"))
+        self.kv_ip = park(KeyValue("", ""))
+        self.kv_port = park(KeyValue("", ""))
+        self.kv_proto = park(KeyValue("", ""))
+        self.kv_rate = park(KeyValue("", ""))
+        self.kv_vigem = park(KeyValue("", ""))
+        self.status_dot = Block("statusDot", holder)
+        self.status_dot.setFixedSize(9, 9)
+        self.status_text = QLabel("", holder)
+        self.status_text.setObjectName("statusText")
 
     # ---------- 信号 / 快捷键 / 配置 ----------
 
@@ -593,9 +744,11 @@ class MainWindow(QMainWindow):
     # ---------- 接收引擎回调（UI 线程） ----------
 
     def _on_listening(self, port: int, ip: str) -> None:
+        self.address_ip.setText(ip)
+        self.address_port.setText(f":{port}")
         self.kv_ip.set_value(ip)
         self.kv_port.set_value(str(port))
-        self.header_state.setText(f"LISTENING   UDP {port}")
+        self.header_state.setText("LISTENING")
         self.status_text.setText(f"监听中   0.0.0.0:{port}   本机 {ip}")
         self.status_error.setText("")
         self._set_running_ui(True)
@@ -610,6 +763,8 @@ class MainWindow(QMainWindow):
             self._log("info", "监听已停止")
 
     def _on_snapshot(self, snap: dict) -> None:
+        self.device_number.setText(f'{snap["online"]} / 4')
+        self.slot_strip.set_slots(snap["rows"])
         self.m_pps.set_value(str(snap["pps"]))
         self.m_loss.set_value(f'{snap["loss"]:.1f}%')
         self.m_online.set_value(str(snap["online"]))
@@ -634,14 +789,13 @@ class MainWindow(QMainWindow):
         self._log("error", msg)
 
     def _on_driver(self, ok: bool, detail: str) -> None:
+        # 界面已不呈现驱动字段与错误横幅；驱动状态仅保留在数据对象中
         self.kv_vigem.set_value("已启用" if ok else "仅监听", alert=not ok)
-        if not ok and ("未检测到" in detail or "失败" in detail or "未找到" in detail):
-            self._show_error(f"{detail}。接收与展示仍可用，但不会驱动虚拟手柄")
 
     def _show_error(self, msg: str) -> None:
-        self.alert_text.setText(msg)
-        self.alert.show()
-        self.status_error.setText(msg if len(msg) <= 52 else msg[:52] + "…")
+        self.alert_text.setText(msg)      # 兼容既有数据对象，不再显示横幅
+        self.alert.hide()
+        self.status_error.setText(msg if len(msg) <= 72 else msg[:72] + "…")
 
     def _on_table_select(self, rows: list[dict] | None = None) -> None:
         if rows is not None:
@@ -675,6 +829,8 @@ class MainWindow(QMainWindow):
         self._restyle(self.status_dot, "statusDotOn" if running else "statusDot")
         if not running:
             self._last_rows = []
+            self.device_number.setText("0 / 4")
+            self.slot_strip.set_slots([])
             self.table.clear_rows()
             self.scope_l.set_xy(0, 0)
             self.scope_r.set_xy(0, 0)
