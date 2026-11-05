@@ -45,14 +45,15 @@ _VENDOR = os.path.join(_RES, "vendor")
 if os.path.isdir(_VENDOR) and _VENDOR not in sys.path:
     sys.path.insert(0, _VENDOR)
 
-from PySide6.QtCore import QSettings, Qt, QTimer, Signal  # noqa: E402
+from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal  # noqa: E402
 from PySide6.QtGui import (  # noqa: E402
-    QAction, QColor, QFont, QIcon, QIntValidator, QKeySequence,
+    QAction, QColor, QCursor, QFont, QIcon, QIntValidator, QKeySequence,
     QPainter, QPixmap, QShortcut,
 )
 from PySide6.QtWidgets import (  # noqa: E402
-    QApplication, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QAbstractButton, QApplication, QCheckBox, QFrame, QHBoxLayout, QHeaderView,
+    QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QPushButton, QScrollArea,
+    QScrollBar, QTableWidget, QVBoxLayout, QWidget,
 )
 
 from receiver import Receiver, local_ip  # noqa: E402
@@ -61,13 +62,20 @@ from style import (  # noqa: E402
     STATUSBAR_H, UNIT, WHITE, font,
 )
 from widgets import (  # noqa: E402
-    Block, DataTable, KeyValue, LogView, Metric, StickScope, rule, section,
+    Block, DataTable, KeyValue, LogView, Metric, StickScope,
+    TitleBar, WindowButton, rule, section,
 )
 
 APP_ORG = "VirtualGamepad"
 APP_NAME = "PCReceiver"
 DEFAULT_PORT = 26760
 APP_VERSION = "1.0.0"
+
+# 边缘缩放热区不接管这些控件：避免窗口贴边时吞掉按钮/输入/表格的正常点击
+RESIZE_EXCLUDED = (
+    WindowButton, QScrollBar, QAbstractButton, QLineEdit, QCheckBox,
+    QTableWidget, QPlainTextEdit, QHeaderView,
+)
 
 
 def portable_settings() -> QSettings:
@@ -101,11 +109,27 @@ class MainWindow(QMainWindow):
     def __init__(self, selftest_dir: str | None = None):
         super().__init__()
         self.selftest_dir = selftest_dir
+        # 无边框窗口：视觉全部由应用绘制；保留系统菜单/最小化/最大化 hint，
+        # 以维持任务栏窗口管理、Alt+Tab 与系统级移动/缩放行为。
+        self.setWindowFlags(
+            Qt.WindowType.Window
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowSystemMenuHint
+            | Qt.WindowType.WindowMinimizeButtonHint
+            | Qt.WindowType.WindowMaximizeButtonHint
+        )
         self.setWindowTitle(f"VIRTUAL GAMEPAD  —  PC RECEIVER  v{APP_VERSION}")
         self.setWindowIcon(app_icon())
         self.setMinimumSize(1024, 680)
         self.resize(1320, 860)
         self.settings = portable_settings()
+
+        self._resize_margin = 6       # 客户区边缘缩放热区（逻辑像素，自动适配 DPI）
+        self._window_controls: list[WindowButton] = []
+        self.header: TitleBar | None = None
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
 
         self.receiver = Receiver(self)
         self._last_rows: list[dict] = []
@@ -169,11 +193,11 @@ class MainWindow(QMainWindow):
             area.setFixedWidth(SIDEBAR_W)
         return area
 
-    def _build_header(self) -> QWidget:
-        h = Block("header")
-        h.setFixedHeight(HEADER_H)
+    def _build_header(self) -> TitleBar:
+        h = TitleBar()
+        # 右侧外边距为 0：窗口控制按钮贴齐窗口边缘，无缝衔接，无额外留白
         lay = QHBoxLayout(h)
-        lay.setContentsMargins(32, 0, 32, 0)
+        lay.setContentsMargins(32, 0, 0, 0)
         lay.setSpacing(16)
 
         brand_box = QVBoxLayout()
@@ -201,6 +225,20 @@ class MainWindow(QMainWindow):
         meta.setObjectName("headerMeta")
         meta.setFont(font(8, tracking=1.0))
         lay.addWidget(meta)
+        lay.addSpacing(24)
+
+        controls = QHBoxLayout()
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.setSpacing(0)
+        self.btn_min = WindowButton("min", h)
+        self.btn_max = WindowButton("max", h)
+        self.btn_close = WindowButton("close", h)
+        for btn in (self.btn_min, self.btn_max, self.btn_close):
+            controls.addWidget(btn)
+            h.register_control(btn)
+            self._window_controls.append(btn)
+        lay.addLayout(controls)
+        self.header = h
         return h
 
     def _build_alert(self) -> QWidget:
@@ -370,6 +408,11 @@ class MainWindow(QMainWindow):
     # ---------- 信号 / 快捷键 / 配置 ----------
 
     def _bind_signals(self) -> None:
+        self.header.moveRequested.connect(self._start_system_move)
+        self.header.toggleRequested.connect(self.toggle_maximize)
+        self.btn_min.clicked.connect(self.showMinimized)
+        self.btn_max.clicked.connect(self.toggle_maximize)
+        self.btn_close.clicked.connect(self.close)
         self.receiver.listening.connect(self._on_listening)
         self.receiver.stopped.connect(self._on_stopped)
         self.receiver.snapshot.connect(self._on_snapshot)
@@ -386,6 +429,105 @@ class MainWindow(QMainWindow):
         copy_sc = QShortcut(QKeySequence("Ctrl+C"), self.table)
         copy_sc.setContext(Qt.ShortcutContext.WidgetShortcut)
         copy_sc.activated.connect(self._copy_row)
+
+    # ---------- 无边框窗口行为（Qt 6 稳定 API） ----------
+
+    def _start_system_move(self) -> None:
+        """交给 Windows 执行系统级移动：保留 Aero Snap、多显示器与窗口约束。"""
+        handle = self.windowHandle()
+        if handle is not None:
+            handle.startSystemMove()
+
+    def toggle_maximize(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+        self._sync_window_controls()
+
+    def _sync_window_controls(self) -> None:
+        self.btn_max.set_restore(self.isMaximized())
+
+    def _set_active_style(self, active: bool) -> None:
+        """激活/失焦状态由应用自己体现，不依赖原生标题栏变色。"""
+        self._restyle(self.header, "header" if active else "headerInactive")
+        for child in self.header.findChildren(QWidget):
+            child.style().unpolish(child)
+            child.style().polish(child)
+
+    def changeEvent(self, event) -> None:      # noqa: N802
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            self._sync_window_controls()
+        elif event.type() == QEvent.Type.ActivationChange:
+            self._set_active_style(self.isActiveWindow())
+
+    def _edges_at(self, global_pos) -> Qt.Edges:
+        """把客户区最外层 6px 映射为系统缩放边（最大化时禁用）。"""
+        if self.isMinimized() or self.isMaximized() or not self.isVisible():
+            return Qt.Edges()
+        r = self.frameGeometry()
+        x = global_pos.x() - r.x()
+        y = global_pos.y() - r.y()
+        m = self._resize_margin
+        if x < -2 or y < -2 or x > r.width() + 2 or y > r.height() + 2:
+            return Qt.Edges()
+        edges = Qt.Edges()
+        if x <= m:
+            edges |= Qt.Edge.LeftEdge
+        if x >= r.width() - m:
+            edges |= Qt.Edge.RightEdge
+        if y <= m:
+            edges |= Qt.Edge.TopEdge
+        if y >= r.height() - m:
+            edges |= Qt.Edge.BottomEdge
+        return edges
+
+    def _update_resize_cursor(self, global_pos, obj) -> None:
+        if isinstance(obj, RESIZE_EXCLUDED):
+            self.unsetCursor()
+            return
+        edges = self._edges_at(global_pos)
+        if not edges:
+            if self.cursor().shape() != Qt.CursorShape.ArrowCursor:
+                self.unsetCursor()
+            return
+        left = bool(edges & Qt.Edge.LeftEdge)
+        right = bool(edges & Qt.Edge.RightEdge)
+        top = bool(edges & Qt.Edge.TopEdge)
+        bottom = bool(edges & Qt.Edge.BottomEdge)
+        if (left or right) and (top or bottom):
+            shape = (Qt.CursorShape.SizeFDiagCursor
+                     if (left and top) or (right and bottom)
+                     else Qt.CursorShape.SizeBDiagCursor)
+        elif left or right:
+            shape = Qt.CursorShape.SizeHorCursor
+        else:
+            shape = Qt.CursorShape.SizeVerCursor
+        self.setCursor(QCursor(shape))
+
+    def _try_system_resize(self, global_pos, obj) -> bool:
+        """边缘按下交给系统缩放；按钮和滚动条不参与，避免误吞点击。"""
+        if isinstance(obj, RESIZE_EXCLUDED):
+            return False
+        edges = self._edges_at(global_pos)
+        if not edges:
+            return False
+        handle = self.windowHandle()
+        if handle is not None:
+            handle.startSystemResize(edges)
+        return True
+
+    def eventFilter(self, obj, event) -> bool:      # noqa: N802
+        if isinstance(obj, QWidget) and obj.window() is self:
+            kind = event.type()
+            if kind == QEvent.Type.MouseMove:
+                self._update_resize_cursor(event.globalPosition().toPoint(), obj)
+            elif (kind == QEvent.Type.MouseButtonPress
+                  and event.button() == Qt.MouseButton.LeftButton
+                  and self._try_system_resize(event.globalPosition().toPoint(), obj)):
+                return True
+        return super().eventFilter(obj, event)
 
     def _load_settings(self) -> None:
         st = self.settings
@@ -614,6 +756,9 @@ class MainWindow(QMainWindow):
     # ---------- 生命周期 ----------
 
     def closeEvent(self, event) -> None:
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
         self._selftest_stop.set()
         self.receiver.stop()
         if self._occupied is not None:
@@ -627,17 +772,39 @@ class MainWindow(QMainWindow):
 
 def main() -> int:
     if "--diag" in sys.argv:
-        # 便携版部署诊断：确认资源根、sys.path 与可选运行库是否就位
+        # 便携版部署诊断：分别确认「运行库是否就位」与「驱动是否安装」。
+        # vgamepad 在 import 时会实例化全局 VBus() 并连接总线，无驱动时抛
+        # VIGEM_ERROR_BUS_NOT_FOUND；这属于驱动状态，不是运行库缺失。
+        import ctypes
+        import importlib.util
         with open(os.path.join(_APP_DIR, "diag.txt"), "w", encoding="utf-8") as fh:
             fh.write(f"frozen={_FROZEN}\n_RES={_RES}\n_VENDOR={_VENDOR}\n")
             fh.write("sys.path=" + repr(sys.path) + "\n")
             try:
-                import vgamepad
-                fh.write(f"vgamepad={vgamepad.__file__}\n")
-                from vgamepad.win import vigem_client
-                fh.write("ViGEmClient=OK\n")
+                spec = importlib.util.find_spec("vgamepad")
+                fh.write(f"vgamepad_spec={spec.origin if spec else None}\n")
+                arch = "x64" if ctypes.sizeof(ctypes.c_void_p) == 8 else "x86"
+                dll = os.path.join(_VENDOR, "vgamepad", "win", "vigem",
+                                   "client", arch, "ViGEmClient.dll")
+                fh.write(f"dll_exists={os.path.isfile(dll)}\n")
+                lib = ctypes.CDLL(dll)
+                fh.write(f"ViGEmClient=OK sym={lib.vigem_alloc is not None}\n")
+                try:
+                    lib.vigem_alloc.restype = ctypes.c_void_p
+                    lib.vigem_connect.argtypes = [ctypes.c_void_p]
+                    lib.vigem_connect.restype = ctypes.c_uint
+                    lib.vigem_disconnect.argtypes = [ctypes.c_void_p]
+                    lib.vigem_free.argtypes = [ctypes.c_void_p]
+                    bus = lib.vigem_alloc()
+                    err = int(lib.vigem_connect(bus))
+                    if err == 0:
+                        lib.vigem_disconnect(bus)
+                    lib.vigem_free(bus)
+                    fh.write(f"driver={'READY' if err == 0 else 'MISSING'} err=0x{err:08X}\n")
+                except Exception as exc:      # noqa: BLE001
+                    fh.write(f"driver=UNKNOWN {exc!r}\n")
             except Exception as exc:      # noqa: BLE001
-                fh.write(f"vgamepad=FAIL {exc!r}\n")
+                fh.write(f"runtime=FAIL {exc!r}\n")
         return 0
 
     selftest_dir = None

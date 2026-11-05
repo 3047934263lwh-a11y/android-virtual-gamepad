@@ -29,6 +29,9 @@ server-csharp/obj/
 release/
 desktop/assets/ViGEmBus_Setup.exe
 
+# ---- 源码运行生成的便携配置 ----
+desktop/config/
+
 # ---- 编辑器/系统 ----
 .idea/
 *.iml

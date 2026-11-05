@@ -51,12 +51,22 @@ QWidget#sidebar, QWidget#statusBar {{
 
 /* ---- 顶栏 ---- */
 QWidget#header {{ background: {INK}; }}
+QWidget#headerInactive {{ background: #242424; }}
 QLabel#brand {{ color: {WHITE}; font-size: 17pt; font-weight: bold; }}
 QLabel#brandSub {{ color: #9A9A9A; font-size: 8pt; }}
 QLabel#headerState {{ color: {WHITE}; font-size: 9pt; font-weight: bold; }}
 QLabel#headerMeta {{ color: #9A9A9A; font-size: 8pt; }}
 QWidget#stateChip {{ background: {RED}; }}
 QWidget#stateChipIdle {{ background: #6A6A6A; }}
+
+/* ---- 自绘窗口控制区（无原生标题栏） ---- */
+QAbstractButton#winBtn {{
+    background: transparent; border: none; padding: 0; margin: 0;
+}}
+QWidget#headerInactive QLabel#brand {{ color: #D5D5D5; }}
+QWidget#headerInactive QLabel#headerState {{ color: #B4B4B4; }}
+QWidget#headerInactive QLabel#brandSub,
+QWidget#headerInactive QLabel#headerMeta {{ color: #787878; }}
 
 /* ---- 错误横幅 ---- */
 QWidget#alertBar {{ background: {RED}; }}

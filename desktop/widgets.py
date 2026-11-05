@@ -5,14 +5,14 @@ from __future__ import annotations
 import html
 from datetime import datetime
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QHeaderView, QLabel, QPlainTextEdit,
+    QAbstractButton, QFrame, QHBoxLayout, QHeaderView, QLabel, QPlainTextEdit,
     QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from style import INK, LINE, MUTED, RED, font
+from style import HEADER_H, INK, LINE, MUTED, RED, WHITE, font
 
 
 class Block(QWidget):
@@ -24,6 +24,136 @@ class Block(QWidget):
             self.setObjectName(name)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setProperty("block", "1")
+
+
+class WindowButton(QAbstractButton):
+    """自绘窗口控制按钮：纯几何线框图标，无任何 Windows 原生按钮外观。
+
+    kind: min / max / close；max 在窗口最大化时切换为「还原」双框图标。
+    状态反馈遵循设计系统：悬停浅白蒙层、按下加深、关闭悬停瑞士红。
+    """
+
+    WIDTH = 48
+
+    def __init__(self, kind: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.kind = kind
+        self._restore = False
+        self.setObjectName("winBtn")
+        self.setProperty("kind", kind)
+        self.setFixedSize(self.WIDTH, HEADER_H)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setToolTip({
+            "min": "最小化   MINIMIZE",
+            "max": "最大化   MAXIMIZE",
+            "close": "关闭   CLOSE",
+        }[kind])
+        self.setAccessibleName(self.toolTip())
+
+    def set_restore(self, restore: bool) -> None:
+        """窗口最大化时把图标切换成「还原」。"""
+        if self.kind != "max" or self._restore == restore:
+            return
+        self._restore = restore
+        self.setToolTip("还原   RESTORE" if restore else "最大化   MAXIMIZE")
+        self.setAccessibleName(self.toolTip())
+        self.update()
+
+    def paintEvent(self, event) -> None:      # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        bg = QColor(INK)
+        if self.isDown():
+            bg = QColor(184, 28, 34) if self.kind == "close" else QColor(255, 255, 255, 62)
+        elif self.underMouse():
+            bg = QColor(RED) if self.kind == "close" else QColor(255, 255, 255, 34)
+        p.fillRect(self.rect(), bg)
+
+        cx, cy = w / 2.0, h / 2.0
+        p.setPen(QPen(QColor(WHITE), 1.25, Qt.PenStyle.SolidLine,
+                      Qt.PenCapStyle.SquareCap))
+        if self.kind == "min":
+            p.drawLine(QLineF(cx - 6, cy, cx + 6, cy))
+        elif self.kind == "max":
+            if self._restore:
+                back = QRectF(cx - 1.5, cy - 6.5, 8, 8)
+                front = QRectF(cx - 6.5, cy - 1.5, 8, 8)
+                p.drawRect(back)
+                p.fillRect(front.adjusted(0.7, 0.7, -0.7, -0.7), bg)
+                p.drawRect(front)
+            else:
+                p.drawRect(QRectF(cx - 5.5, cy - 5.5, 11, 11))
+        else:
+            p.drawLine(QLineF(cx - 5, cy - 5, cx + 5, cy + 5))
+            p.drawLine(QLineF(cx + 5, cy - 5, cx - 5, cy + 5))
+
+        # 与相邻按钮之间只用 1px 半透明竖线分隔，保持几何克制
+        p.setPen(QPen(QColor(255, 255, 255, 40), 1))
+        p.drawLine(QLineF(0.5, 14, 0.5, h - 14))
+        p.end()
+
+
+class TitleBar(Block):
+    """应用自绘标题栏：与黑底顶栏同一块画布，负责拖动与双击切换。
+
+    按下不立即进入系统移动循环（否则双击事件会被系统吞掉），
+    而是在左键移动超过 4px 后才请求系统级移动，兼顾拖动与双击。
+    """
+
+    moveRequested = Signal()
+    toggleRequested = Signal()
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__("header", parent)
+        self.setFixedHeight(HEADER_H)
+        self._controls: list[QWidget] = []
+        self._press_pos: QPoint | None = None
+
+    def register_control(self, widget: QWidget) -> None:
+        """注册不可用于拖动/双击的子控件（窗口控制按钮）。"""
+        self._controls.append(widget)
+
+    def _over_control(self, pos: QPoint) -> bool:
+        node = self.childAt(pos)
+        while node is not None and node is not self:
+            if node in self._controls:
+                return True
+            node = node.parentWidget()
+        return False
+
+    def mousePressEvent(self, event) -> None:      # noqa: N802
+        pos = event.position().toPoint()
+        if (event.button() == Qt.MouseButton.LeftButton
+                and not self._over_control(pos)):
+            self._press_pos = pos
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:      # noqa: N802
+        if (self._press_pos is not None
+                and event.buttons() & Qt.MouseButton.LeftButton):
+            if (event.position().toPoint() - self._press_pos).manhattanLength() > 4:
+                self._press_pos = None
+                self.moveRequested.emit()
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:      # noqa: N802
+        self._press_pos = None
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:      # noqa: N802
+        pos = event.position().toPoint()
+        if (event.button() == Qt.MouseButton.LeftButton
+                and not self._over_control(pos)):
+            self.toggleRequested.emit()
+            event.accept()
+        else:
+            super().mouseDoubleClickEvent(event)
 
 
 def rule(vertical: bool = False) -> QFrame:
