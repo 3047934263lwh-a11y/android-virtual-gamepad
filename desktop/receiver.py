@@ -144,6 +144,12 @@ class Receiver(QObject):
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # 加大接收缓冲：手机端 250Hz 小包 + 线程调度抖动会造成短暂突发，
+        # 默认缓冲在突发峰值可能溢出丢包；256KB 可容纳 1.3 万个 20 字节报文
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 262144)
+        except OSError:
+            pass
         try:
             sock.bind(("0.0.0.0", port))
         except OSError as exc:
@@ -347,11 +353,16 @@ class Receiver(QObject):
 
                 now = time.monotonic()
                 latest: dict[str, tuple[bytes, tuple]] = {}
+                rx_counts: dict[str, int] = {}
                 if r:
                     try:
                         while True:
                             data, addr = sock.recvfrom(64)
                             latest[addr[0]] = (data, addr)
+                            # 每个真实到达的报文都计数：按来源只应用最新帧是
+                            # 低延迟语义，但统计必须计入本轮排空的全部积压帧，
+                            # 否则 GIL/渲染让 select 偶发积压时 pps 被低估
+                            rx_counts[addr[0]] = rx_counts.get(addr[0], 0) + 1
                     except BlockingIOError:
                         pass
                     except ConnectionResetError:
@@ -413,8 +424,10 @@ class Receiver(QObject):
                         throttled("apply", "error", f"{p.idx + 1}P 状态写入失败：{exc}", 3.0)
                     p.neutral = False
                     p.last_rx = now
-                    p.packets += 1
-                    p.report_packets += 1
+                    # 最新帧 1 次 + 本轮排空的其余积压帧（真实到达数）
+                    burst = rx_counts.get(src, 1) - 1
+                    p.packets += 1 + burst
+                    p.report_packets += 1 + burst
 
                     if p.last_seq >= 0:
                         gap = (seq - ((p.last_seq + 1) & 0xFF)) & 0xFF

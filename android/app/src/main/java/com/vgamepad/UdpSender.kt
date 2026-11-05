@@ -275,8 +275,11 @@ class UdpSender(private val state: GamepadState) {
             val sleep = next - System.nanoTime()
             if (sleep > 0) {
                 LockSupport.parkNanos(sleep)
-            } else if (sleep < -periodNs * 8) {
-                // 线程被长时间挂起（息屏/GC），重置基准，避免补偿性突发发送
+            } else if (sleep < -periodNs * 2) {
+                // 线程被调度/GC 挂起超过 2 个周期：丢弃欠账、重置基准。
+                // 补发的全是过时状态（PC 端逐来源只应用最新帧），追赶毫无
+                // 价值，只会挤占 Wi-Fi 造成到达率突刺；丢帧让逐秒计数
+                // 稳定在 250、链路保持低延迟。
                 next = System.nanoTime()
             }
         }

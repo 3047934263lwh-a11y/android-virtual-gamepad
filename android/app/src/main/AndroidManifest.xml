@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- WifiLock 低延迟模式：阻止 Wi-Fi 省电缓冲造成 4ms 小包被聚合/丢弃，
+         保证 250Hz 发送链路的低延迟与到达率 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- 触感反馈与游戏震动回传 -->
     <uses-permission android:name="android.permission.VIBRATE" />
 

@@ -6,6 +6,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.animation.AnimatorListenerAdapter
@@ -128,6 +129,7 @@ class MainActivity : AppCompatActivity() {
     private var linkError: String? = null
     private var lastPps = 0
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var wifiLock: WifiManager.WifiLock? = null
     private val uiHandler = Handler(Looper.getMainLooper())
     private val reconnectTask = Runnable { attemptReconnect() }
     private val watchdog = object : Runnable {
@@ -286,6 +288,16 @@ class MainActivity : AppCompatActivity() {
         portInput.setText(prefs.getInt("port", UdpSender.DEFAULT_PORT).toString())
 
         sender = UdpSender(gamepadView.state)
+        // Wi-Fi 低延迟锁：省电模式会把 4ms 间隔的小包攒到 beacon 周期集中发出，
+        // 造成输入延迟抖动与丢包（实测到达率 ~87%）。会话期间保持低延迟模式。
+        wifiLock = (applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager)
+            ?.createWifiLock(
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                    WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                else
+                    @Suppress("DEPRECATION") WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                "vgp-link"
+            )?.apply { setReferenceCounted(false) }
         gyroAim = GyroAim(this)
         gyroAim?.onAim = { rx, ry ->
             gamepadView.state.gyroRx = (rx * 32767).toInt()
@@ -1545,6 +1557,8 @@ class MainActivity : AppCompatActivity() {
         lastReplyAt = 0L
         linkError = null
         uiHandler.removeCallbacks(reconnectTask)
+        // 会话开始：Wi-Fi 进入低延迟模式（自动重连间隔同样受益）
+        try { wifiLock?.acquire() } catch (e: Exception) { }
         startSender(host, port)
         applyGyroState()
     }
@@ -1552,6 +1566,7 @@ class MainActivity : AppCompatActivity() {
     private fun disconnect() {
         userStopped = true
         uiHandler.removeCallbacks(reconnectTask)
+        try { wifiLock?.release() } catch (e: Exception) { }
         sender.stop()
         gamepadView.releaseAll()
         playerNo = 0
@@ -1817,6 +1832,7 @@ class MainActivity : AppCompatActivity() {
             try { cm?.unregisterNetworkCallback(cb) } catch (e: Exception) { }
         }
         networkCallback = null
+        try { wifiLock?.release() } catch (e: Exception) { }
         sender.stop()
         resumed = false
         gyroAim?.stop()   // 注销传感器监听，避免泄漏
