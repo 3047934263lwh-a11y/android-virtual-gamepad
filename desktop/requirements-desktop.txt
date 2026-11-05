@@ -1,0 +1,4 @@
+# PC 桌面接收端依赖
+# vgamepad (MIT) 及其 ViGEmClient DLL 已随 desktop/vendor/ 一并提供，无需安装。
+# ViGEmBus 1.22.0 为系统驱动，需单独安装：https://github.com/nefarius/ViGEmBus/releases
+PySide6>=6.6
