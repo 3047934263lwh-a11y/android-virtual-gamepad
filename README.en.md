@@ -54,14 +54,9 @@ driver behind it. Once installed, every XInput title picks it up **natively**.
 
 | Capability | Detail |
 | --- | --- |
-| Real device, not a mapper | Kernel-level virtual bus device; XInput enumeration is indistinguishable from hardware, 16-bit sticks and 8-bit triggers |
-| Local multiplayer P1–P4 | Slots assigned by source IP, numbering survives reconnects, rumble delivered to the right phone |
-| Gyro aiming | Fused orientation (`Game Rotation Vector`, 50 Hz), adds to the right stick; invert pitch / yaw independently |
 | Two independent sensitivities | "Gyro camera" and "right-stick camera" are separate 0–100 settings that never affect each other |
-| Rumble feedback | Game `XInputSetState` → driver callback → phone vibration, with strength / duration / minimum-interval tuning |
 | Complete button set | ABXY, LB/RB, LT/RT (0–255 analogue), D-pad, `☰` Menu, `X` Home, L3/R3 — 19 controls in total |
 | Three stick-click modes | Tap the centre / double-tap inside the stick / hold while operating; pushing the stick never mis-clicks |
-| Per-control layout editing | Position / size (50%–500%) / opacity / visibility, saved automatically; hidden controls neither draw nor receive touches |
 | Material 3 + neumorphic UI | Five low-saturation palettes with a 480 ms background cross-fade, light / dark / system, press-sink animation |
 | Collapsible top bar | Collapses to a 「手柄」 pill; expanding blurs the live pad and shows a frosted glass panel without stealing game touches |
 | Self-healing connection | Wi-Fi drops and receiver restarts reconnect with backoff — measured **~1 s recovery** after a PC restart |

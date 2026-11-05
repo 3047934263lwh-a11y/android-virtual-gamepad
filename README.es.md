@@ -54,14 +54,9 @@ tiene un driver detrás. Una vez instalado, cualquier juego XInput lo detecta **
 
 | Capacidad | Detalle |
 | --- | --- |
-| Dispositivo real, no un mapeo | Dispositivo de bus virtual a nivel de kernel; la enumeración XInput es indistinguible del hardware, sticks de 16 bits y gatillos de 8 bits |
-| Multijugador local 1P–4P | Ranuras asignadas por IP de origen, la numeración sobrevive a reconexiones, vibración al móvil correcto |
-| Aim por giroscopio | Orientación fusionada (`Game Rotation Vector`, 50 Hz), se suma al stick derecho; inversión de cabeceo y giro independiente |
 | Dos sensibilidades independientes | «Cámara por giroscopio» y «cámara por stick derecho» son ajustes 0–100 separados que no se afectan |
-| Vibración de vuelta | `XInputSetState` del juego → callback del driver → vibración del móvil, con intensidad / duración / intervalo mínimo |
 | Conjunto completo de botones | ABXY, LB/RB, LT/RT (0–255 analógicos), cruceta, `☰` Menú, `X` Home, L3/R3 — 19 controles |
 | Tres modos de pulsación del stick | Tocar el centro / doble toque dentro del stick / mantener al operarlo; empujar el stick nunca pulsa por error |
-| Edición de disposición por control | Posición / tamaño (50%–500%) / opacidad / visibilidad, guardado automático; oculto no dibuja ni recibe toques |
 | Interfaz Material 3 + neumorfismo | Cinco paletas de baja saturación con transición de fondo de 480 ms, claro / oscuro / sistema, animación de pulsación |
 | Barra superior plegable | Se recoge en una píldora «手柄»; al expandirse difumina el mando en vivo y muestra un panel de cristal esmerilado |
 | Conexión autorreparable | Cortes de Wi-Fi y reinicios del receptor se recuperan con retroceso — **~1 s** medido tras reiniciar el PC |
