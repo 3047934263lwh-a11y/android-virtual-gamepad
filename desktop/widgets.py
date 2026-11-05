@@ -12,7 +12,9 @@ from PySide6.QtCore import (
     QEasingCurve, QLineF, QPoint, QPointF, QRectF, Qt, QTimer,
     QVariantAnimation, Signal,
 )
-from PySide6.QtGui import QColor, QPainter, QPen, QRadialGradient
+from PySide6.QtGui import (
+    QColor, QPainter, QPainterPath, QPen, QRadialGradient,
+)
 from PySide6.QtWidgets import (
     QAbstractButton, QFrame, QHBoxLayout, QHeaderView, QLabel, QPlainTextEdit,
     QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
@@ -255,55 +257,222 @@ class Starfield(QWidget):
         p.end()
 
 
+def _css_easing() -> QEasingCurve:
+    """CSS cubic-bezier(0.23, 1, 0.32, 1)：Qt 的 BezierSpline 可精确构造。"""
+    e = QEasingCurve(QEasingCurve.Type.BezierSpline)
+    e.addCubicBezierSegment(QPointF(0.23, 1.0), QPointF(0.32, 1.0),
+                            QPointF(1.0, 1.0))
+    return e
+
+
+def _mix(a: QColor, b: QColor, t: float) -> QColor:
+    return QColor(round(a.red() + (b.red() - a.red()) * t),
+                  round(a.green() + (b.green() - a.green()) * t),
+                  round(a.blue() + (b.blue() - a.blue()) * t),
+                  round(a.alpha() + (b.alpha() - a.alpha()) * t))
+
+
 class AnimatedAction(QAbstractButton):
-    """主操作按钮：只取 Uiverse.io by gharsh11032000 的三段动效
-    （中心圆扩散、文字位移、按压缩放），不引入其绿黄配色、胶囊圆角、
-    描边与箭头 SVG；静态外观仍是 Grid 暗色直角。
+    """Uiverse.io by gharsh11032000 的 .animated-button 完整 Qt 复刻。
+
+    静态态保持 Grid 暗色直角按钮；鼠标悬停或按下时按钮「转换成」该 CSS 的
+    动效形态，动画结束后回到静态。CSS 的 box-shadow / SVG / transition 在 Qt
+    没有对应实现，全部用 QPainter 自绘 + QVariantAnimation 等价映射：
+
+      border-radius 100px -> 12px      圆角胶囊收敛为 12px 圆角
+      box-shadow 2px -> 12px transparent  外环扩散并淡出（:active 4px 实色）
+      .circle 20px -> 220px, opacity 0 -> 1   中心绿黄圆扩散
+      .arr-1 right 16px -> -25%       右侧箭头滑出
+      .arr-2 left -25% -> 16px        左侧箭头滑入
+      .text translateX(-12 -> +12px)  文字位移
+      color greenyellow -> #212121     文字与箭头反色
+      :active scale(0.95)             按压缩放
+      transition 0.6s / 0.8s cubic-bezier(0.23,1,0.32,1)  双时长 + 精确缓动
     """
+
+    DUR_ALL = 600        # transition: all .6s
+    DUR_PARTS = 800      # svg / circle / text .8s
+    LIME = QColor("#ADFF2F")     # greenyellow
+    DARK = QColor("#212121")
 
     def __init__(self, text: str = "START", parent: QWidget | None = None):
         super().__init__(parent)
         self.setText(text)
         self._mode = "start"
-        self._progress = 0.0
+        self._progress = 0.0     # 0..1 线性动画进度（800ms 全程）
+        self._target = 0.0
+        self._pressed = False
         self.setObjectName("actionBtn")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self.setFixedHeight(64)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._ease = _css_easing()
         self._anim = QVariantAnimation(self)
-        self._anim.setDuration(620)
+        self._anim.setDuration(self.DUR_PARTS)
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(1.0)
-        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._anim.valueChanged.connect(self._on_anim)
+        self._anim.finished.connect(self._on_finished)
 
     def set_mode(self, running: bool) -> None:
         self._mode = "stop" if running else "start"
         self.setText("STOP" if running else "START")
         self.update()
 
+    # ---------- 状态机 ----------
+    def _animate_to(self, target: float) -> None:
+        # leaveEvent 与 _on_finished 可能同时请求回退；目标一致且动画在跑时不重启，
+        # 否则回退会被反复拉长，动效迟迟不结束。
+        if (abs(self._target - target) < 1e-6
+                and self._anim.state() == QVariantAnimation.State.Running):
+            return
+        self._target = target
+        self._anim.stop()
+        start = self._progress
+        self._anim.setStartValue(start)
+        self._anim.setEndValue(target)
+        self._anim.setDuration(max(140, int(self.DUR_PARTS * abs(target - start))))
+        self._anim.start()
+
     def _on_anim(self, value) -> None:
         self._progress = float(value)
         self.update()
 
+    def _on_finished(self) -> None:
+        # 点击触发（不在 hover 上）时动效完整播完再退回静态；hover 时保持动效态
+        if (self._target > 0.0 and not self.underMouse()
+                and not self._pressed and not self.isDown()):
+            self._animate_to(0.0)
+
+    def enterEvent(self, event) -> None:      # noqa: N802
+        self._animate_to(1.0)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:      # noqa: N802
+        if not self._pressed and not self.isDown():
+            self._animate_to(0.0)
+        super().leaveEvent(event)
+
     def mousePressEvent(self, event) -> None:      # noqa: N802
+        # 点击必定触发完整动效（合成点击不产生 enterEvent），从 0 重新播放
+        self._pressed = True
         self._anim.stop()
         self._progress = 0.0
+        self._target = 1.0
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(1.0)
+        self._anim.setDuration(self.DUR_PARTS)
         self._anim.start()
+        self.update()
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:      # noqa: N802
+        # 回退统一由 _on_finished 在动效播完后触发；若动效已先播完，
+        # 则在此立即回退，避免按钮永久停在动效态。
+        self._pressed = False
+        if (not self.underMouse()
+                and self._anim.state() != QVariantAnimation.State.Running
+                and self._target > 0.0):
+            self._animate_to(0.0)
+        self.update()
+        super().mouseReleaseEvent(event)
+
+    # ---------- 绘制 ----------
+    @staticmethod
+    def _arrow(p: QPainter, x: float, y: float, w: float, h: float,
+               color: QColor) -> None:
+        """24x24 右向箭头（对应 .animated-button svg 的 arr-1 / arr-2）。"""
+        path = QPainterPath()
+        path.moveTo(x, y + h * 0.46)
+        path.lineTo(x + w * 0.58, y + h * 0.46)
+        path.lineTo(x + w * 0.58, y + h * 0.18)
+        path.lineTo(x + w, y + h * 0.50)
+        path.lineTo(x + w * 0.58, y + h * 0.82)
+        path.lineTo(x + w * 0.58, y + h * 0.54)
+        path.lineTo(x, y + h * 0.54)
+        path.closeSubpath()
+        p.fillPath(path, color)
 
     def paintEvent(self, event) -> None:      # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
-        if self.isDown():
+        pressed = self._pressed or self.isDown()
+        if pressed:                            # :active scale(0.95)
             p.save()
             p.translate(w / 2.0, h / 2.0)
             p.scale(0.95, 0.95)
             p.translate(-w / 2.0, -h / 2.0)
 
+        animated = self._progress > 0.0 or self._target > 0.0 or pressed
+        if not animated:
+            self._paint_static(p, w, h)
+            if pressed:
+                p.restore()
+            p.end()
+            return
+
+        raw = max(0.0, min(1.0, self._progress))
+        t_all = self._ease.valueForProgress(min(1.0, raw * self.DUR_PARTS / self.DUR_ALL))
+        t_part = self._ease.valueForProgress(raw)
+
+        # border-radius: 100px -> 12px（按钮高 64px，100px 等价胶囊 32px）
+        radius = min(h / 2.0, 100.0 * (1.0 - t_all) + 12.0 * t_all)
+        shape = QPainterPath()
+        shape.addRoundedRect(QRectF(0, 0, w, h), radius, radius)
+
+        # background-color: inherit —— 沿用项目深色底
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(PAPER))
+        p.drawPath(shape)
+
+        # box-shadow: 0 0 0 2px greenyellow -> 0 0 0 12px transparent
+        ring_w = 2.0 + 10.0 * t_all
+        ring_alpha = 1.0 - t_all
+        if pressed:                            # :active 0 0 0 4px greenyellow
+            ring_w, ring_alpha = 4.0, 1.0
+        ring = QColor(self.LIME)
+        ring.setAlphaF(max(0.0, min(1.0, ring_alpha)))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(ring, ring_w))
+        p.drawRoundedRect(QRectF(ring_w / 2.0, ring_w / 2.0,
+                                 w - ring_w, h - ring_w), radius, radius)
+
+        # overflow: hidden —— 圆、箭头、文字都裁在按钮轮廓内
+        p.save()
+        p.setClipPath(shape)
+
+        # .circle: 20px -> 220px，opacity 0 -> 1
+        d = 20.0 + 200.0 * t_part
+        circle = QColor(self.LIME)
+        circle.setAlphaF(min(1.0, t_part * 1.15))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(circle)
+        p.drawEllipse(QPointF(w / 2.0, h / 2.0), d / 2.0, d / 2.0)
+
+        arrow_color = _mix(self.LIME, self.DARK, t_all)
+        aw = 24.0
+        # arr-1: right 16px -> -25%（滑出）；arr-2: left -25% -> 16px（滑入）
+        x1 = (w - 16.0 - aw) * (1.0 - t_part) + (-w * 0.25) * t_part
+        x2 = (-w * 0.25) * (1.0 - t_part) + 16.0 * t_part
+        self._arrow(p, x1, (h - aw) / 2.0, aw, aw, arrow_color)
+        self._arrow(p, x2, (h - aw) / 2.0, aw, aw, arrow_color)
+
+        # .text: translateX(-12px) -> +12px，color greenyellow -> #212121
+        shift = -12.0 + 24.0 * t_part
+        fg = _mix(self.LIME, self.DARK, t_all)
+        p.setPen(fg)
+        p.setFont(self.font())
+        p.drawText(QRectF(shift, 0, w, h), Qt.AlignmentFlag.AlignCenter, self.text())
+        p.restore()
+
+        if pressed:
+            p.restore()
+        p.end()
+
+    def _paint_static(self, p: QPainter, w: float, h: float) -> None:
+        """未悬停/未按下的静态态：Grid 暗色直角，保持整套界面语言统一。"""
         hover = self.underMouse()
         if self._mode == "start":
             bg = QColor(WHITE) if hover else QColor(INK)
@@ -316,20 +485,9 @@ class AnimatedAction(QAbstractButton):
         p.fillRect(self.rect(), bg)
         p.setPen(QPen(border, 1))
         p.drawRect(QRectF(0.5, 0.5, w - 1, h - 1))
-
-        if self._progress > 0.0:
-            r = (math.hypot(w, h) / 2.0) * self._progress
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(216, 35, 42, int(165 * (1.0 - self._progress))))
-            p.drawEllipse(QPointF(w / 2.0, h / 2.0), r, r)
-
-        shift = -12.0 + 24.0 * self._progress
         p.setPen(fg)
         p.setFont(self.font())
-        p.drawText(QRectF(shift, 0, w, h), Qt.AlignmentFlag.AlignCenter, self.text())
-        if self.isDown():
-            p.restore()
-        p.end()
+        p.drawText(QRectF(0, 0, w, h), Qt.AlignmentFlag.AlignCenter, self.text())
 
 
 def rule(vertical: bool = False) -> QFrame:

@@ -28,6 +28,7 @@ MAX_PLAYERS = 4
 SLOT_TTL_SEC = 300.0
 SELECT_TIMEOUT = 0.004          # 4ms：250Hz 报文下既不过度空转，也不引入排队延迟
 SNAPSHOT_SEC = 0.10            # UI 快照 10Hz，避免 250Hz 刷新把界面打爆
+REPORT_SEC = 0.25              # 回传链路实测速率的结算周期：连上 250ms 内即可显示真实速率
 BTN_NAMES = (
     (1 << 0, "A"), (1 << 1, "B"), (1 << 2, "X"), (1 << 3, "Y"),
     (1 << 4, "LB"), (1 << 5, "RB"), (1 << 6, "BACK"), (1 << 7, "START"),
@@ -40,8 +41,9 @@ BTN_NAMES = (
 def vgpp_packet(slot: int, pps: int) -> bytes:
     """8 字节编号回包：VGP P / 版本 / 槽位 1..4 / PC 实测 pps / 保留。
 
-    pps 由 PC 每秒统计后回传，手机端只显示这个「链路实收速率」，
-    不再显示本地固定 250Hz 发送计数（后者会让断开后仍显示高 pps）。
+    pps 由 PC 按 REPORT_SEC 结算并折算成每秒包数后回传，手机端只显示这个
+    「链路实收速率」，不再显示本地固定 250Hz 发送计数（后者会让断开后仍显示
+    高 pps）。单字节字段上限 255；当前 SEND_HZ=250 不会触顶。
     """
     return b"VGPP" + bytes([VERSION, slot, min(255, max(0, int(pps))), 0])
 
@@ -79,7 +81,7 @@ def local_ip() -> str:
 
 class _Player:
     __slots__ = ("idx", "pad", "addr", "last_rx", "neutral", "last_seq",
-                 "packets", "lost", "state")
+                 "packets", "lost", "state", "report_packets")
 
     def __init__(self, idx: int, pad, addr):
         self.idx = idx
@@ -90,6 +92,7 @@ class _Player:
         self.last_seq = -1
         self.packets = 0
         self.lost = 0
+        self.report_packets = 0      # 本速率结算周期内收到的包数
         self.state = (0, 0, 0, 0, 0, 0, 0, 0)
 
 
@@ -290,7 +293,8 @@ class Receiver(QObject):
         self._rumble_addrs.clear()
         started = time.monotonic()
         last_snapshot = 0.0
-        last_report = time.monotonic()
+        last_report = time.monotonic()   # 链路速率回传的结算起点
+        last_second = started            # 完整 1 秒窗口（快照/丢包率）的结算起点
         last_log: dict[str, float] = {}
         bad_packets = 0
         rate_window = {i: 0 for i in range(MAX_PLAYERS)}   # 上一完整秒的包数
@@ -410,6 +414,7 @@ class Receiver(QObject):
                     p.neutral = False
                     p.last_rx = now
                     p.packets += 1
+                    p.report_packets += 1
 
                     if p.last_seq >= 0:
                         gap = (seq - ((p.last_seq + 1) & 0xFF)) & 0xFF
@@ -447,13 +452,23 @@ class Receiver(QObject):
                     loss_window[p.idx] = 0
                     self.log.emit("info", f"{p.idx + 1}P 离线超过 5 分钟，槽位已释放")
 
-                if now - last_report >= 1.0:
+                # 链路实收速率：先结算本周期再回传，避免「发的是上一秒的值」
+                # 造成首秒 0、第二秒才跳到 220+ 的先低后高观感。
+                # 短周期按实际时长折算成每秒包数，连接 250ms 内即有真值。
+                if now - last_report >= REPORT_SEC:
+                    elapsed = now - last_report
                     for p in players.values():
-                        try:
-                            if p.addr is not None:
-                                sock.sendto(vgpp_packet(p.idx + 1, rate_window.get(p.idx, 0)), p.addr)
-                        except OSError:
-                            pass
+                        rate = int(p.report_packets / elapsed + 0.5) if elapsed > 0 else 0
+                        p.report_packets = 0
+                        if p.addr is not None:
+                            try:
+                                sock.sendto(vgpp_packet(p.idx + 1, rate), p.addr)
+                            except OSError:
+                                pass
+                    last_report = now
+
+                # 完整 1 秒窗口仍独立结算，供 PC 端快照与丢包率使用
+                if now - last_second >= 1.0:
                     for p in players.values():
                         rate_window[p.idx] = p.packets
                         loss_window[p.idx] = p.lost
@@ -463,7 +478,7 @@ class Receiver(QObject):
                         if i not in {p.idx for p in players.values()}:
                             rate_window[i] = 0
                             loss_window[i] = 0
-                    last_report = now
+                    last_second = now
 
                 if now - last_snapshot >= SNAPSHOT_SEC:
                     last_snapshot = now
