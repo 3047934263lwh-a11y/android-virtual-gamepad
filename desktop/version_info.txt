@@ -17,12 +17,12 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'VirtualGamepad'),
             StringStruct('FileDescription', 'Virtual Gamepad PC Receiver (Portable)'),
-            StringStruct('FileVersion', '1.0.0.0'),
+            StringStruct('FileVersion', '1.1.0.0'),
             StringStruct('InternalName', 'VirtualGamepadReceiver'),
             StringStruct('LegalCopyright', 'MIT / GPL-3.0'),
             StringStruct('OriginalFilename', 'VirtualGamepadReceiver.exe'),
             StringStruct('ProductName', 'Virtual Gamepad PC Receiver'),
-            StringStruct('ProductVersion', '1.0.0.0')
+            StringStruct('ProductVersion', '1.1.0.0')
           ]
         )
       ]

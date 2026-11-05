@@ -6,7 +6,7 @@
 
 产物：
     ../release/VirtualGamepadReceiver-Portable/                 完整程序目录
-    ../release/VirtualGamepadReceiver-Portable-v1.0.0-win64.zip  拷贝即用压缩包
+    ../release/VirtualGamepadReceiver-Portable-v1.1.0-win64.zip  拷贝即用压缩包
 
 脚本会：生成图标 → 冻结为原生窗口 EXE（onedir）→ 补齐 VC++ 运行库与
 许可文件 → 组织交付目录 → 结构校验 → 打包 zip。
@@ -26,7 +26,7 @@ DIST = os.path.join(RELEASE, "_dist_tmp")
 WORK = os.path.join(RELEASE, "_build_tmp")
 PKG = "VirtualGamepadReceiver-Portable"
 OUT = os.path.join(RELEASE, PKG)
-ZIP = os.path.join(RELEASE, f"{PKG}-v1.0.0-win64.zip")
+ZIP = os.path.join(RELEASE, f"{PKG}-v1.1.0-win64.zip")
 EXE = "VirtualGamepadReceiver.exe"
 
 # VC++ 2015-2022 运行库：Qt6 / CPython 在干净的 Windows 上也可能需要，
@@ -37,7 +37,7 @@ VCRUNTIME = (
     "concrt140.dll",
 )
 
-README = """VIRTUAL GAMEPAD  ·  PC RECEIVER  ·  便携版 v1.0.0
+README = """VIRTUAL GAMEPAD  ·  PC RECEIVER  ·  便携版 v1.1.0
 ==================================================
 
 【启动】
