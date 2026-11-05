@@ -3,16 +3,24 @@
 from __future__ import annotations
 
 import html
+import math
+import random
+import time
 from datetime import datetime
 
-from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtCore import (
+    QEasingCurve, QLineF, QPoint, QPointF, QRectF, Qt, QTimer,
+    QVariantAnimation, Signal,
+)
+from PySide6.QtGui import QColor, QPainter, QPen, QRadialGradient
 from PySide6.QtWidgets import (
     QAbstractButton, QFrame, QHBoxLayout, QHeaderView, QLabel, QPlainTextEdit,
     QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from style import HEADER_H, INK, LINE, MUTED, PAPER, RED, WHITE, font
+from style import (
+    BG_DEEP, HEADER_H, INK, LINE, MUTED, PAPER, RED, RED_BRIGHT, WHITE, font,
+)
 
 
 class Block(QWidget):
@@ -190,6 +198,137 @@ class SlotStrip(QWidget):
             p.setPen(QColor(WHITE if on else MUTED))
             p.setFont(font(9, bold=True, tracking=1.0))
             p.drawText(cell, Qt.AlignmentFlag.AlignCenter, f"P{i + 1}")
+        p.end()
+
+
+class Starfield(QWidget):
+    """Uiverse.io by jaykdoe 星空动效的 Qt 自绘复刻。
+
+    CSS 的三层 box-shadow 星点与 :after 复制层无法在 Qt 直接使用，改为确定性
+    随机生成同密度星点；三层 1/2/3px 分别以 50s / 100s / 150s 走完 2000px
+    周期向上平移，第二份星图位于 +2000px，实现与 CSS 一致的无缝循环。
+    背景为底部向外的径向渐变 #1B2735 → #090A0F。
+    """
+
+    PERIOD = 2000.0
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("starfield")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        rnd = random.Random(20261106)
+        self._layers = []
+        for count, size, speed, alpha in (
+            (700, 1.0, self.PERIOD / 50.0, 165),
+            (200, 2.0, self.PERIOD / 100.0, 210),
+            (100, 3.0, self.PERIOD / 150.0, 255),
+        ):
+            pts = [(rnd.uniform(0.0, self.PERIOD), rnd.uniform(0.0, self.PERIOD))
+                   for _ in range(count)]
+            self._layers.append((pts, size, speed, alpha))
+        self._t0 = time.monotonic()
+        self._timer = QTimer(self)
+        self._timer.setInterval(33)
+        self._timer.timeout.connect(self.update)
+        self._timer.start()
+
+    def paintEvent(self, event) -> None:      # noqa: N802
+        p = QPainter(self)
+        w, h = self.width(), self.height()
+        if w <= 0 or h <= 0:
+            p.end()
+            return
+        grad = QRadialGradient(QPointF(w / 2.0, h), max(w, h) * 1.15)
+        grad.setColorAt(0.0, QColor(BG_DEEP))
+        grad.setColorAt(1.0, QColor(PAPER))
+        p.fillRect(self.rect(), grad)
+
+        elapsed = time.monotonic() - self._t0
+        for pts, size, speed, alpha in self._layers:
+            off = (elapsed * speed) % self.PERIOD
+            col = QColor(255, 255, 255, alpha)
+            for sx, sy in pts:
+                x = sx % w
+                for y in (sy - off, sy + self.PERIOD - off):
+                    if 0.0 <= y < h:
+                        p.fillRect(QRectF(x, y, size, size), col)
+        p.end()
+
+
+class AnimatedAction(QAbstractButton):
+    """主操作按钮：只取 Uiverse.io by gharsh11032000 的三段动效
+    （中心圆扩散、文字位移、按压缩放），不引入其绿黄配色、胶囊圆角、
+    描边与箭头 SVG；静态外观仍是 Grid 暗色直角。
+    """
+
+    def __init__(self, text: str = "START", parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setText(text)
+        self._mode = "start"
+        self._progress = 0.0
+        self.setObjectName("actionBtn")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedHeight(64)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(620)
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim)
+
+    def set_mode(self, running: bool) -> None:
+        self._mode = "stop" if running else "start"
+        self.setText("STOP" if running else "START")
+        self.update()
+
+    def _on_anim(self, value) -> None:
+        self._progress = float(value)
+        self.update()
+
+    def mousePressEvent(self, event) -> None:      # noqa: N802
+        self._anim.stop()
+        self._progress = 0.0
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.start()
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event) -> None:      # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        if self.isDown():
+            p.save()
+            p.translate(w / 2.0, h / 2.0)
+            p.scale(0.95, 0.95)
+            p.translate(-w / 2.0, -h / 2.0)
+
+        hover = self.underMouse()
+        if self._mode == "start":
+            bg = QColor(WHITE) if hover else QColor(INK)
+            fg = QColor(INK) if hover else QColor(WHITE)
+            border = QColor(WHITE) if hover else QColor(LINE)
+        else:
+            bg = QColor(RED) if hover else QColor(PAPER)
+            fg = QColor(WHITE) if hover else QColor(RED_BRIGHT)
+            border = QColor(RED)
+        p.fillRect(self.rect(), bg)
+        p.setPen(QPen(border, 1))
+        p.drawRect(QRectF(0.5, 0.5, w - 1, h - 1))
+
+        if self._progress > 0.0:
+            r = (math.hypot(w, h) / 2.0) * self._progress
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(216, 35, 42, int(165 * (1.0 - self._progress))))
+            p.drawEllipse(QPointF(w / 2.0, h / 2.0), r, r)
+
+        shift = -12.0 + 24.0 * self._progress
+        p.setPen(fg)
+        p.setFont(self.font())
+        p.drawText(QRectF(shift, 0, w, h), Qt.AlignmentFlag.AlignCenter, self.text())
+        if self.isDown():
+            p.restore()
         p.end()
 
 

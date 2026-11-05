@@ -53,7 +53,7 @@ from PySide6.QtGui import (  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QAbstractButton, QApplication, QCheckBox, QFrame, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QPushButton, QScrollArea,
-    QScrollBar, QTableWidget, QVBoxLayout, QWidget,
+    QScrollBar, QStackedLayout, QTableWidget, QVBoxLayout, QWidget,
 )
 
 from receiver import Receiver, local_ip  # noqa: E402
@@ -62,8 +62,8 @@ from style import (  # noqa: E402
     STATUSBAR_H, UNIT, WHITE, font,
 )
 from widgets import (  # noqa: E402
-    Block, DataTable, KeyValue, LogView, Metric, SlotStrip, StickScope,
-    TitleBar, WindowButton, rule, section,
+    AnimatedAction, Block, DataTable, KeyValue, LogView, Metric, SlotStrip,
+    Starfield, StickScope, TitleBar, WindowButton, rule, section,
 )
 
 APP_ORG = "VirtualGamepad"
@@ -398,12 +398,23 @@ class MainWindow(QMainWindow):
     def _build_minimal_ui(self) -> None:
         """单一网格承载全部可见元素：1px 发丝分区，层级由跨格与字号建立，
         无卡片、无圆角、无阴影、无浮动元素。"""
-        central = Block("central")
-        root = QVBoxLayout(central)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        central = QWidget(self)
+        central.setObjectName("central")
+        stack = QStackedLayout(central)
+        stack.setStackingMode(QStackedLayout.StackingMode.StackAll)
+        stack.setContentsMargins(0, 0, 0, 0)
+        stack.setSpacing(0)
+        self.starfield = Starfield()
+        page = QWidget()
+        page.setObjectName("page")
+        stack.addWidget(self.starfield)
+        stack.addWidget(page)
+        stack.setCurrentWidget(page)   # StackAll 下 current 决定最上层
         self.setCentralWidget(central)
 
+        root = QVBoxLayout(page)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
         root.addWidget(self._build_header())
 
         body = Block("body")
@@ -458,10 +469,8 @@ class MainWindow(QMainWindow):
         lay.addWidget(copy)
         lay.addStretch(1)
 
-        self.toggle_btn = QPushButton("开始监听   START")
-        self.toggle_btn.setObjectName("primary")
+        self.toggle_btn = AnimatedAction("START")
         self.toggle_btn.setFont(font(11, bold=True, tracking=1.0))
-        self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.toggle_btn.clicked.connect(self.toggle_listen)
         lay.addWidget(self.toggle_btn)
         return cell
@@ -823,8 +832,7 @@ class MainWindow(QMainWindow):
         self.port_edit.setEnabled(not running)
         for cb in (self.auto_cb, self.vigem_cb, self.debug_cb):
             cb.setEnabled(not running)
-        self.toggle_btn.setText("停止监听   STOP" if running else "开始监听   START")
-        self._restyle(self.toggle_btn, "primaryStop" if running else "primary")
+        self.toggle_btn.set_mode(running)
         self._restyle(self.header_chip, "stateChip" if running else "stateChipIdle")
         self._restyle(self.status_dot, "statusDotOn" if running else "statusDot")
         if not running:
