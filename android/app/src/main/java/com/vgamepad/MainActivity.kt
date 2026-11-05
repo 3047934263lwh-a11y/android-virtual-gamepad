@@ -53,9 +53,12 @@ class MainActivity : AppCompatActivity() {
         const val CLICK_CENTER = 0
         const val CLICK_DOUBLE = 1
         const val CLICK_ALWAYS = 2
-        /** 曾收到过回包、但超过该时间没再收到 → 判定链路已断 */
+        /** 曾收到过回包、但超过该时间没再收到 → 触发自动重连（既有行为不变） */
         const val LINK_LOST_MS = 6000L
-        const val WATCHDOG_MS = 3000L
+        /** 状态栏显示用兜底超时：PC 未发 VGPQ 时也能较快切「未连接」；
+         *  取 2.5s 是为了给「每秒一次 VGPP」留足余量，避免正常抖动误判 */
+        const val LINK_SHOW_MS = 2500L
+        const val WATCHDOG_MS = 500L
         /** 编辑模式单键大小滑杆上限：450 ↔ 缩放 5.0×（500%），与 GamepadView.MAX_CTRL_SCALE 对应 */
         const val EDIT_SIZE_SEEK_MAX = 450
         /** 链路状态着色档位：空闲 / 连接中·重连中 / 已连接 / 断开·错误 */
@@ -120,6 +123,8 @@ class MainActivity : AppCompatActivity() {
     private var autoRetryCount = 0
     private var lastReplyAt = 0L
     private var everGotReply = false
+    /** PC 端主动结束会话（VGPQ）：状态立即显示未连接，直到再次收到 VGPP */
+    private var pcStopped = false
     private var linkError: String? = null
     private var lastPps = 0
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -128,6 +133,7 @@ class MainActivity : AppCompatActivity() {
     private val watchdog = object : Runnable {
         override fun run() {
             checkLink()
+            renderStatus()          // 定时刷新，保证兜底超时后状态栏及时归零
             uiHandler.postDelayed(this, WATCHDOG_MS)
         }
     }
@@ -150,8 +156,24 @@ class MainActivity : AppCompatActivity() {
         }
 
         override fun onStats(pps: Int) {
+            // 本地发送速率由 SEND_HZ 固定决定（250Hz），与 PC 是否接收无关：
+            // 若继续用它做展示源，PC 停止后仍会显示 250 pps 的假数值。
+            // 状态栏 PPS 改为只认 PC 回传的实测速率（onLinkStats）。
+        }
+
+        override fun onLinkStats(pps: Int) {
             if (!sender.isRunning) return
             lastPps = pps
+            markReply()
+        }
+
+        override fun onDisconnected() {
+            if (!sender.isRunning) return
+            // PC 端 Stop：立即切未连接，且不再沿用旧的 pps / 玩家号
+            pcStopped = true
+            lastPps = 0
+            playerNo = 0
+            linkError = null
             renderStatus()
         }
 
@@ -159,6 +181,7 @@ class MainActivity : AppCompatActivity() {
             // 旧发送线程迟到的回调：新发送器已在运行时直接忽略，避免熄灭新链路的绿点
             if (sender.isRunning) return
             lastPps = 0
+            pcStopped = false
             if (userStopped) {
                 resetConnectUi()
             } else {
@@ -1401,8 +1424,13 @@ class MainActivity : AppCompatActivity() {
             applyLinkState(LINK_ERR)
             return
         }
-        if (everGotReply && SystemClock.uptimeMillis() - lastReplyAt > LINK_LOST_MS) {
-            statusText.text = "连接中断，正在自动重连…"
+        // PC 主动结束会话（VGPQ），或超过显示兜底超时没有回包：
+        // 立即切「未连接」并清空 pps / 玩家号，不再沿用旧状态与数值。
+        // checkLink() 仍按 LINK_LOST_MS 触发自动重连，既有行为不变。
+        if (pcStopped || (everGotReply && SystemClock.uptimeMillis() - lastReplyAt > LINK_SHOW_MS)) {
+            lastPps = 0
+            playerNo = 0
+            statusText.text = "未连接 · 0 pps"
             applyLinkState(LINK_WARN)
             return
         }
@@ -1418,10 +1446,11 @@ class MainActivity : AppCompatActivity() {
         portInput.isEnabled = true
     }
 
-    /** 收到任何 PC 回包 = 链路确实活着（Python 端每秒下发 VGPP） */
+    /** 收到任何 PC 回包 = 链路确实活着（VGPP 每秒下发，VGPR 震动回传） */
     private fun markReply() {
         lastReplyAt = SystemClock.uptimeMillis()
         everGotReply = true
+        pcStopped = false       // PC 重新 Start 后立即恢复「已连接」，与 Start 同步
         linkError = null
         autoRetryCount = 0
         renderStatus()
@@ -1454,6 +1483,8 @@ class MainActivity : AppCompatActivity() {
         // 新链路先当作「尚未收到回包」，避免刚重连就被 watchdog 判死而无限重启
         everGotReply = false
         lastReplyAt = 0L
+        pcStopped = false
+        lastPps = 0
         startSender(host, port)
     }
 

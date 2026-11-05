@@ -36,6 +36,12 @@ class UdpSender(private val state: GamepadState) {
 
         /** 本地多人：接收端为本手机分配的玩家编号（1..4） */
         fun onPlayerAssigned(playerIndex: Int) {}
+
+        /** PC 端实测接收速率：每秒随 VGPP 回传，状态栏 PPS 的唯一数据源 */
+        fun onLinkStats(pps: Int) {}
+
+        /** PC 端点击 Stop：会话结束通知，手机端应立即切「未连接」并清空 pps/玩家号 */
+        fun onDisconnected() {}
     }
 
     companion object {
@@ -168,9 +174,14 @@ class UdpSender(private val state: GamepadState) {
                             val small = buf[6].toInt() and 0xFF
                             listener?.let { l -> main.post { l.onRumble(large, small) } }
                         }
-                        0x50 -> if (buf[4] == 1.toByte()) {           // "VGPP" 玩家编号
+                        0x50 -> if (buf[4] == 1.toByte()) {           // "VGPP" 玩家编号 + 实测 pps
                             val n = buf[5].toInt() and 0xFF
+                            val pps = buf[6].toInt() and 0xFF
                             if (n in 1..4) listener?.let { l -> main.post { l.onPlayerAssigned(n) } }
+                            listener?.let { l -> main.post { l.onLinkStats(pps) } }
+                        }
+                        0x51 -> if (buf[4] == 1.toByte()) {           // "VGPQ" PC 端会话结束
+                            listener?.let { l -> main.post { l.onDisconnected() } }
                         }
                     }
                 }

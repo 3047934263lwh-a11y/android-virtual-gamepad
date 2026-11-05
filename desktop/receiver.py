@@ -28,7 +28,6 @@ MAX_PLAYERS = 4
 SLOT_TTL_SEC = 300.0
 SELECT_TIMEOUT = 0.004          # 4ms：250Hz 报文下既不过度空转，也不引入排队延迟
 SNAPSHOT_SEC = 0.10            # UI 快照 10Hz，避免 250Hz 刷新把界面打爆
-
 BTN_NAMES = (
     (1 << 0, "A"), (1 << 1, "B"), (1 << 2, "X"), (1 << 3, "Y"),
     (1 << 4, "LB"), (1 << 5, "RB"), (1 << 6, "BACK"), (1 << 7, "START"),
@@ -36,6 +35,19 @@ BTN_NAMES = (
     (1 << 10, "UP"), (1 << 11, "DOWN"), (1 << 12, "LEFT"), (1 << 13, "RIGHT"),
     (1 << 14, "GUIDE"),
 )
+
+
+def vgpp_packet(slot: int, pps: int) -> bytes:
+    """8 字节编号回包：VGP P / 版本 / 槽位 1..4 / PC 实测 pps / 保留。
+
+    pps 由 PC 每秒统计后回传，手机端只显示这个「链路实收速率」，
+    不再显示本地固定 250Hz 发送计数（后者会让断开后仍显示高 pps）。
+    """
+    return b"VGPP" + bytes([VERSION, slot, min(255, max(0, int(pps))), 0])
+
+
+# PC 端 Stop：主动告知手机端会话结束，令其立即切「未连接」并清空 pps/玩家号
+PACKET_QUIT = b"VGPQ" + bytes([VERSION, 0, 0, 0])
 
 
 def parse(data: bytes):
@@ -376,7 +388,7 @@ class Receiver(QObject):
                         self._rumble_addrs[idx] = addr
                         self.log.emit("info", f"{idx + 1}P 已连接  {src}:{addr[1]}")
                         try:
-                            sock.sendto(b"VGPP" + bytes([1, idx + 1, 0, 0]), addr)
+                            sock.sendto(vgpp_packet(idx + 1, 0), addr)
                         except OSError:
                             pass
 
@@ -386,7 +398,7 @@ class Receiver(QObject):
                     # App 重启后源端口变化：重发编号，手机端立即知道自己是几 P
                     if prev is None or prev[1] != addr[1]:
                         try:
-                            sock.sendto(b"VGPP" + bytes([1, p.idx + 1, 0, 0]), addr)
+                            sock.sendto(vgpp_packet(p.idx + 1, rate_window.get(p.idx, 0)), addr)
                         except OSError:
                             pass
 
@@ -439,7 +451,7 @@ class Receiver(QObject):
                     for p in players.values():
                         try:
                             if p.addr is not None:
-                                sock.sendto(b"VGPP" + bytes([1, p.idx + 1, 0, 0]), p.addr)
+                                sock.sendto(vgpp_packet(p.idx + 1, rate_window.get(p.idx, 0)), p.addr)
                         except OSError:
                             pass
                     for p in players.values():
@@ -458,6 +470,17 @@ class Receiver(QObject):
                     # pps 用上一秒窗口值，避免 100ms 快照把速率放大
                     emit_snapshot(now)
         finally:
+            # Stop 时主动通知所有手机端「会话结束」：手机端收到立即切未连接、
+            # 清空 pps 与玩家号，不必等 6 秒链路超时。UDP 无连接，连发两次
+            # 提高到达率；旧版手机端忽略未知回包类型，向后兼容。
+            for p in list(players.values()):
+                if p.addr is None:
+                    continue
+                for _ in range(2):
+                    try:
+                        sock.sendto(PACKET_QUIT, p.addr)
+                    except OSError:
+                        break
             for p in players.values():
                 self._unplug(p.pad)
             self._rumble_addrs.clear()
