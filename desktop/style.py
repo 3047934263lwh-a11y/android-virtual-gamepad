@@ -3,26 +3,26 @@
 
 结构参考 uiverse.io/design/systems/grid（darkBrutalist / Grid）：
   单一网格、1px 发丝分区、层级靠跨格与字号、单一信号色、无圆角/阴影/浮动。
-背景参考 Uiverse.io by jaykdoe 的星空动效：
-  radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%)。
+背景参考 Uiverse.io by jaykdoe 的星空动效（按需求改为中性黑，去蓝色）：
+  radial-gradient(ellipse at bottom, #131316 0%, #070708 100%)。
 本项目保留瑞士红作唯一信号色。
 """
 from PySide6.QtGui import QFont
 
 # ---- 暗色配色 -----------------------------------------------------------
 INK = "#0D131C"          # 深色块：顶栏 / 按钮 / 未占用槽位
-PAPER = "#090A0F"        # 星空渐变外圈 / 底
+PAPER = "#070708"        # 星空渐变外圈 / 底（中性纯黑，无蓝色成分）
 SURFACE = "#151C28"      # 悬浮态
 LINE = "#2A3444"         # 1px 发丝分区线
 MUTED = "#8A94A6"        # 次要文字
 RED = "#D8232A"          # 唯一信号色
 RED_BRIGHT = "#FF4D54"   # 暗底上的可读红
 WHITE = "#F2F5FA"        # 亮文字
-BG_DEEP = "#1B2735"      # 星空渐变中心色
-BG_CELL = "rgba(9, 13, 20, 0.46)"
-BG_CELL_ALT = "rgba(9, 13, 20, 0.46)"   # 与左栏一致：整张星空亮度连续贯穿左右
-BG_HEADER = "rgba(7, 10, 16, 0.88)"
-BG_FOOTER = "rgba(9, 10, 15, 0.72)"
+BG_DEEP = "#131316"      # 星空渐变中心色（中性黑，去蓝）
+BG_CELL = "rgba(8, 8, 10, 0.46)"
+BG_CELL_ALT = "rgba(8, 8, 10, 0.46)"   # 与左栏一致：整张星空亮度连续贯穿左右
+BG_HEADER = "rgba(5, 5, 6, 0.88)"
+BG_FOOTER = "rgba(8, 8, 10, 0.72)"
 
 # ---- 字体 ---------------------------------------------------------------
 SANS = "Arial"

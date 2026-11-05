@@ -322,6 +322,14 @@ class AnimatedAction(QAbstractButton):
 
     # ---------- 状态机 ----------
     def _animate_to(self, target: float) -> None:
+        # STOP 态按需求不播动效：保持静态，任何触发立即归零
+        if self._mode == "stop":
+            self._target = 0.0
+            self._anim.stop()
+            if self._progress != 0.0:
+                self._progress = 0.0
+                self.update()
+            return
         # leaveEvent 与 _on_finished 可能同时请求回退；目标一致且动画在跑时不重启，
         # 否则回退会被反复拉长，动效迟迟不结束。
         if (abs(self._target - target) < 1e-6
@@ -355,15 +363,16 @@ class AnimatedAction(QAbstractButton):
         super().leaveEvent(event)
 
     def mousePressEvent(self, event) -> None:      # noqa: N802
-        # 点击必定触发完整动效（合成点击不产生 enterEvent），从 0 重新播放
         self._pressed = True
-        self._anim.stop()
-        self._progress = 0.0
-        self._target = 1.0
-        self._anim.setStartValue(0.0)
-        self._anim.setEndValue(1.0)
-        self._anim.setDuration(self.DUR_PARTS)
-        self._anim.start()
+        if self._mode == "start":
+            # 点击必定触发完整动效（合成点击不产生 enterEvent），从 0 重新播放
+            self._anim.stop()
+            self._progress = 0.0
+            self._target = 1.0
+            self._anim.setStartValue(0.0)
+            self._anim.setEndValue(1.0)
+            self._anim.setDuration(self.DUR_PARTS)
+            self._anim.start()
         self.update()
         super().mousePressEvent(event)
 
@@ -399,16 +408,18 @@ class AnimatedAction(QAbstractButton):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
         pressed = self._pressed or self.isDown()
-        if pressed:                            # :active scale(0.95)
+        scaled = pressed and self._mode == "start"
+        if scaled:                             # :active scale(0.95)——仅 START 态
             p.save()
             p.translate(w / 2.0, h / 2.0)
             p.scale(0.95, 0.95)
             p.translate(-w / 2.0, -h / 2.0)
 
-        animated = self._progress > 0.0 or self._target > 0.0 or pressed
+        animated = (self._mode == "start"
+                    and (self._progress > 0.0 or self._target > 0.0 or pressed))
         if not animated:
             self._paint_static(p, w, h)
-            if pressed:
+            if scaled:
                 p.restore()
             p.end()
             return
@@ -469,7 +480,7 @@ class AnimatedAction(QAbstractButton):
         p.drawText(QRectF(shift, 0, w, h), Qt.AlignmentFlag.AlignCenter, self.text())
         p.restore()
 
-        if pressed:
+        if scaled:
             p.restore()
         p.end()
 
