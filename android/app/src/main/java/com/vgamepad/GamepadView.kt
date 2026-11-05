@@ -33,6 +33,7 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.sin
 
 /**
@@ -129,7 +130,9 @@ class GamepadView @JvmOverloads constructor(
         const val Z_LT = 40
         const val Z_RT = 41
 
-        const val DEADZONE = 0.06f
+        const val DEADZONE = 0.02f          // 仅滤触控噪声；游戏内常见 10-20% 死区会叠加，
+                                            // 手机端死区必须足够小才能让"轻微动"有输出
+        const val STICK_GAMMA = 0.75f       // 低段增益指数：<1 放大小位移（raw=10% → 输出 ~16%）
         const val STICK_MAX = 32767f
 
         /**
@@ -2174,7 +2177,8 @@ class GamepadView @JvmOverloads constructor(
         // radius<=0（布局数据异常）时避免除零得 NaN
         if (radius <= 0f) return
         val raw = clamped / radius
-        val mag = if (raw <= DEADZONE) 0f else (raw - DEADZONE) / (1f - DEADZONE)
+        var mag = if (raw <= DEADZONE) 0f else (raw - DEADZONE) / (1f - DEADZONE)
+        if (mag > 0f) mag = mag.pow(STICK_GAMMA)   // 鼠标式即时响应：小位移也被放大
 
         val nowInDead = mag <= 0f
         if (isLeft) {
