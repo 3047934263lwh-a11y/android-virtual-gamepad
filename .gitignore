@@ -24,6 +24,8 @@ server-csharp/obj/
 # ---- 打包产物 ----
 *.zip
 *.msi
+# 例外：随包离线驱动（构建便携版需要，876 KB，BSD-3-Clause 可再分发）
+!desktop/assets/ViGEmBusSetup_x64.msi
 
 # ---- PC 便携版成品（本地交付，二进制不入库）----
 release/

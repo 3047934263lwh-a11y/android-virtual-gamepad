@@ -311,7 +311,7 @@ class MainWindow(QMainWindow):
         lay.addStretch(1)
         note = QLabel(
             "手机与 PC 接入同一 Wi-Fi，App 填写上方 IP 与端口。\n"
-            "虚拟手柄需安装 ViGEmBus 1.22.0。"
+            "虚拟手柄需 ViGEmBus 驱动：运行随包「可选驱动\\ViGEmBusSetup_x64.msi」后重启即可（离线安装，无需联网）。"
         )
         note.setObjectName("footNote")
         note.setFont(font(8))

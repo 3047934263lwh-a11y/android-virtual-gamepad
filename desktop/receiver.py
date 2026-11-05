@@ -185,14 +185,11 @@ class Receiver(QObject):
         if not use_vigem:
             return False, "已在配置中关闭虚拟手柄输出（仅监听模式）"
         try:
-            import vgamepad as vg
-            from vgamepad.win import vigem_client as vcli
+            import vigem_native as vg
+            vg = vg  # noqa: F841  统一命名
+            vcli = vg
         except Exception as exc:      # noqa: BLE001
-            # vgamepad 在 import 期就实例化全局 VBus() 并连接总线；未装驱动时
-            # 抛 VIGEM_ERROR_BUS_NOT_FOUND，这不是「运行库缺失」，须如实区分。
-            if "BUS_NOT_FOUND" in str(exc) or "VIGEM_ERROR_BUS" in str(exc):
-                return False, "未检测到 ViGEmBus 驱动，请安装驱动后重启"
-            return False, f"未找到 vgamepad 运行库：{exc}"
+            return False, f"虚拟手柄模块加载失败：{exc}"
         # 只连接总线、不创建设备：无驱动时 vigem_connect 返回非 0
         client = None
         connected = False

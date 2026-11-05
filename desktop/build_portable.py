@@ -75,10 +75,10 @@ error.log                      仅启动异常时生成，用于排查
 【关于 ViGEmBus 驱动（重要）】
 本软件本身完全绿色：接收、解析、状态反馈、异常处理、界面展示均开箱可用。
 「把报文变成 Windows 虚拟 Xbox 360 手柄」属于系统内核级能力，任何绿色软件
-都无法自带该驱动。若目标 PC 未安装 ViGEmBus 1.22.0，程序不会退出，会自动
+都无法自带该驱动。若目标 PC 未安装 ViGEmBus，程序不会退出，会自动
 进入「仅监听」模式并在界面顶部给出提示；此时数据接收与展示一切正常。
-需要手柄输出时，可选运行「可选驱动\\ViGEmBus_Setup.exe」（仅在缺驱动时需要，
-安装后重启一次即可），之后重新打开本程序会自动启用。
+需要手柄输出时，可选运行「可选驱动\\ViGEmBusSetup_x64.msi」（仅在缺驱动时需要，
+离线安装、无需联网，安装后重启一次即可），之后重新打开本程序会自动启用。
 
 【防火墙】
 首次监听时 Windows 防火墙可能弹出「允许访问网络」提示，请选择「允许」，
@@ -147,19 +147,32 @@ def assemble() -> None:
         fh.write(README)
 
     driver_dir = os.path.join(OUT, "可选驱动")
-    src_driver = os.path.join(ROOT, "assets", "ViGEmBus_Setup.exe")
-    if os.path.isfile(src_driver):
+    # 优先随包离线 MSI（1.17.333，876 KB，装完即用，不联网）；
+    # 官方 1.22.0 的 Setup.exe 是联网 stub（6.2 MB），装的时候还要再下 9.9 MB
+    # 载荷，代理环境下会被写坏（全零文件 → Error 1308），故仅作后备。
+    msi = os.path.join(ROOT, "assets", "ViGEmBusSetup_x64.msi")
+    stub = os.path.join(ROOT, "assets", "ViGEmBus_Setup.exe")
+    if os.path.isfile(msi):
         os.makedirs(driver_dir, exist_ok=True)
-        shutil.copy2(src_driver, os.path.join(driver_dir, "ViGEmBus_Setup.exe"))
+        shutil.copy2(msi, os.path.join(driver_dir, "ViGEmBusSetup_x64.msi"))
         with open(os.path.join(driver_dir, "说明.txt"), "w", encoding="utf-8-sig") as fh:
             fh.write(
-                "ViGEmBus Setup 1.22.0\n"
-                "来源：官方发布 nefarius/ViGEmBus release v1.22.0\n"
+                "ViGEmBus 1.17.333（离线 MSI，推荐）\n"
+                "来源：官方 nefarius/ViGEmBus 驱动（与 v1.0.1–v1.0.10 便携包所带为同一文件）\n"
                 "用途：仅当需要「把手机报文变成 Windows 虚拟 Xbox 360 手柄」时，\n"
                 "      且本机尚未安装 ViGEmBus 驱动，才需要右键「以管理员身份运行」。\n"
                 "      安装完成后重启一次电脑，再打开 VirtualGamepadReceiver.exe 即可。\n"
-                "说明：这是 Windows 内核驱动，任何绿色软件都无法自带；不运行它，\n"
+                "说明：本 MSI 完全离线，安装过程不下载任何东西；已在 Windows 10 22H2 上验证可用。\n"
+                "      这是 Windows 内核驱动，任何绿色软件都无法自带；不运行它，\n"
                 "      本软件的接收、解析、状态反馈与界面展示功能全部照常可用。\n"
+            )
+    elif os.path.isfile(stub):
+        os.makedirs(driver_dir, exist_ok=True)
+        shutil.copy2(stub, os.path.join(driver_dir, "ViGEmBus_Setup.exe"))
+        with open(os.path.join(driver_dir, "说明.txt"), "w", encoding="utf-8-sig") as fh:
+            fh.write(
+                "ViGEmBus Setup 1.22.0（联网安装器）\n"
+                "注意：安装过程需联网下载约 9.9 MB 载荷；代理/VPN 环境下可能下载失败。\n"
             )
 
 
