@@ -25,6 +25,10 @@ server-csharp/obj/
 *.zip
 *.msi
 
+# ---- PC 便携版成品（本地交付，二进制不入库）----
+release/
+desktop/assets/ViGEmBus_Setup.exe
+
 # ---- 编辑器/系统 ----
 .idea/
 *.iml

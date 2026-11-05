@@ -1,17 +1,19 @@
 @echo off
 chcp 65001 >nul
 setlocal EnableDelayedExpansion
-title Virtual Gamepad - Desktop Receiver
+title Virtual Gamepad - Source Development Only
+REM 仅用于源码开发调试。正式使用请双击：
+REM   ..\release\VirtualGamepadReceiver-Portable\VirtualGamepadReceiver.exe
 set "PYTHONUTF8=1"
 set "PYIOENCODING=utf-8"
 
-cd /d "%~dp0desktop" || (
-    echo [ERROR] Cannot find the desktop folder next to this launcher.
+cd /d "%~dp0" || (
+    echo [ERROR] Cannot change to the desktop source folder.
     pause
     exit /b 1
 )
 if not exist "main.py" (
-    echo [ERROR] desktop\main.py not found.
+    echo [ERROR] main.py not found.
     pause
     exit /b 1
 )

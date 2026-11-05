@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """虚拟 Xbox 360 手柄 · PC 桌面接收端（瑞士国际主义风格）
 
-运行：python main.py
-自检：python main.py --selftest <截图目录>   （注入模拟 VGP1 报文并导出界面截图）
+源码运行：python main.py
+便携程序：VirtualGamepadReceiver.exe（由 build_portable.py / portable.spec 打包）
+自检：    python main.py --selftest <截图目录>   （注入模拟 VGP1 报文并导出界面截图）
 """
 from __future__ import annotations
 
@@ -13,10 +14,34 @@ import struct
 import sys
 import threading
 import time
+import traceback
 
-# 自包含运行库（vgamepad 纯 Python + ViGEm DLL，MIT）
+# 资源根：源码运行时是脚本目录；冻结成 exe 后是 PyInstaller 的 _internal 目录。
+# 运行库（vgamepad 纯 Python + ViGEm DLL，MIT）以数据文件随程序一起分发，
+# 运行时从磁盘加载，保证 DLL 的 __file__ 相对路径与源码版完全一致。
+_FROZEN = getattr(sys, "frozen", False)
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_VENDOR = os.path.join(_HERE, "vendor")
+_APP_DIR = os.path.dirname(os.path.abspath(sys.executable)) if _FROZEN else _HERE
+
+
+def resource_root() -> str:
+    """定位 _internal：不同 PyInstaller 版本的 sys._MEIPASS 可能指向 exe
+    目录或 _internal 目录，按 vendor 实际位置探测，避免猜错导致运行库丢失。"""
+    if not _FROZEN:
+        return _HERE
+    guesses = (
+        getattr(sys, "_MEIPASS", ""),
+        os.path.join(_APP_DIR, "_internal"),
+        _APP_DIR,
+    )
+    for path in guesses:
+        if path and os.path.isdir(os.path.join(path, "vendor", "vgamepad")):
+            return path
+    return getattr(sys, "_MEIPASS", "") or _APP_DIR
+
+
+_RES = resource_root()
+_VENDOR = os.path.join(_RES, "vendor")
 if os.path.isdir(_VENDOR) and _VENDOR not in sys.path:
     sys.path.insert(0, _VENDOR)
 
@@ -42,10 +67,24 @@ from widgets import (  # noqa: E402
 APP_ORG = "VirtualGamepad"
 APP_NAME = "PCReceiver"
 DEFAULT_PORT = 26760
+APP_VERSION = "1.0.0"
+
+
+def portable_settings() -> QSettings:
+    """配置写进程序目录（拷贝整个文件夹即连配置一起走）；不可写时回退用户目录。"""
+    try:
+        cfg = os.path.join(_APP_DIR, "config")
+        os.makedirs(cfg, exist_ok=True)
+        return QSettings(os.path.join(cfg, "settings.ini"), QSettings.Format.IniFormat)
+    except OSError:
+        return QSettings(APP_ORG, APP_NAME)
 
 
 def app_icon() -> QIcon:
-    """黑底白字 + 红色几何方块的克制图腾。"""
+    """黑底白字 + 红色几何方块的克制图腾；优先使用随程序分发的多尺寸 ico。"""
+    ico = os.path.join(_RES, "app.ico")
+    if os.path.isfile(ico):
+        return QIcon(ico)
     pm = QPixmap(64, 64)
     pm.fill(QColor(INK))
     p = QPainter(pm)
@@ -62,11 +101,11 @@ class MainWindow(QMainWindow):
     def __init__(self, selftest_dir: str | None = None):
         super().__init__()
         self.selftest_dir = selftest_dir
-        self.setWindowTitle("VIRTUAL GAMEPAD  —  PC RECEIVER  /  虚拟手柄接收端")
+        self.setWindowTitle(f"VIRTUAL GAMEPAD  —  PC RECEIVER  v{APP_VERSION}")
         self.setWindowIcon(app_icon())
         self.setMinimumSize(1024, 680)
         self.resize(1320, 860)
-        self.settings = QSettings(APP_ORG, APP_NAME)
+        self.settings = portable_settings()
 
         self.receiver = Receiver(self)
         self._last_rows: list[dict] = []
@@ -78,6 +117,7 @@ class MainWindow(QMainWindow):
         self._bind_signals()
         self._bind_shortcuts()
         self._load_settings()
+        self._save_settings()        # 便携版启动时即落盘，配置随文件夹走
 
         self._set_running_ui(False)
         self._log("info", f"本机局域网地址 {local_ip()}，手机与 PC 需接入同一网络")
@@ -157,7 +197,7 @@ class MainWindow(QMainWindow):
         self.header_state.setFont(font(9, bold=True, tracking=1.4))
         lay.addWidget(self.header_state)
         lay.addSpacing(24)
-        meta = QLabel("DESKTOP  ·  v1.0")
+        meta = QLabel(f"PORTABLE  ·  v{APP_VERSION}")
         meta.setObjectName("headerMeta")
         meta.setFont(font(8, tracking=1.0))
         lay.addWidget(meta)
@@ -366,6 +406,7 @@ class MainWindow(QMainWindow):
         st.setValue("vigem", self.vigem_cb.isChecked())
         st.setValue("debug", self.debug_cb.isChecked())
         st.setValue("geometry", self.saveGeometry())
+        st.sync()
 
     def _restore_defaults(self) -> None:
         if self.receiver.is_running():
@@ -375,6 +416,7 @@ class MainWindow(QMainWindow):
         self.auto_cb.setChecked(True)
         self.vigem_cb.setChecked(True)
         self.debug_cb.setChecked(False)
+        self._save_settings()
         self._log("info", "配置已恢复默认")
 
     # ---------- 控制 ----------
@@ -400,6 +442,7 @@ class MainWindow(QMainWindow):
             return
         self.alert.hide()
         self.status_error.setText("")
+        self._save_settings()        # 端口/开关改动立即持久化
         self.receiver.start(port, self.vigem_cb.isChecked(), self.debug_cb.isChecked())
 
     def stop_listen(self) -> None:
@@ -583,15 +626,32 @@ class MainWindow(QMainWindow):
 
 
 def main() -> int:
+    if "--diag" in sys.argv:
+        # 便携版部署诊断：确认资源根、sys.path 与可选运行库是否就位
+        with open(os.path.join(_APP_DIR, "diag.txt"), "w", encoding="utf-8") as fh:
+            fh.write(f"frozen={_FROZEN}\n_RES={_RES}\n_VENDOR={_VENDOR}\n")
+            fh.write("sys.path=" + repr(sys.path) + "\n")
+            try:
+                import vgamepad
+                fh.write(f"vgamepad={vgamepad.__file__}\n")
+                from vgamepad.win import vigem_client
+                fh.write("ViGEmClient=OK\n")
+            except Exception as exc:      # noqa: BLE001
+                fh.write(f"vgamepad=FAIL {exc!r}\n")
+        return 0
+
     selftest_dir = None
     if "--selftest" in sys.argv:
         idx = sys.argv.index("--selftest")
-        selftest_dir = sys.argv[idx + 1] if len(sys.argv) > idx + 1 else _HERE
+        selftest_dir = (sys.argv[idx + 1] if len(sys.argv) > idx + 1
+                        else os.path.join(_APP_DIR, "selftest"))
         os.makedirs(selftest_dir, exist_ok=True)
 
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName(APP_ORG)
+    app.setWindowIcon(app_icon())
     app.setStyle("Fusion")           # 统一跨平台绘制，保证 QSS 精准生效
     app.setFont(font(10))
     app.setStyleSheet(QSS)
@@ -600,5 +660,31 @@ def main() -> int:
     return app.exec()
 
 
+def _fatal(exc: BaseException) -> None:
+    """无控制台的窗口程序：出错时落磁盘日志 + 弹窗，不让用户面对静默退出。"""
+    detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    try:
+        with open(os.path.join(_APP_DIR, "error.log"), "w", encoding="utf-8") as fh:
+            fh.write(detail)
+    except OSError:
+        pass
+    try:
+        from PySide6.QtWidgets import QMessageBox
+        a = QApplication.instance() or QApplication(sys.argv)
+        QMessageBox.critical(
+            None, "虚拟手柄接收端 · 启动失败",
+            f"{exc}\n\n详细信息已写入程序目录的 error.log。",
+        )
+        del a
+    except Exception:      # noqa: BLE001
+        pass
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except BaseException as exc:       # noqa: BLE001
+        _fatal(exc)
+        sys.exit(1)
