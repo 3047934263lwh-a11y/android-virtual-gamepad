@@ -17,6 +17,7 @@ LINE = "#2A3444"         # 1px 发丝分区线
 MUTED = "#8A94A6"        # 次要文字
 RED = "#D8232A"          # 唯一信号色
 RED_BRIGHT = "#FF4D54"   # 暗底上的可读红
+GREEN = "#2FBF71"        # 连接成功信号色：1P–4P 槽位占用填充（与 STOP 的红区分）
 WHITE = "#F2F5FA"        # 亮文字
 BG_DEEP = "#131316"      # 星空渐变中心色（中性黑，去蓝）
 BG_CELL = "rgba(8, 8, 10, 0.46)"

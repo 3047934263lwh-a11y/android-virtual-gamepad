@@ -21,7 +21,8 @@ from PySide6.QtWidgets import (
 )
 
 from style import (
-    BG_DEEP, HEADER_H, INK, LINE, MUTED, PAPER, RED, RED_BRIGHT, WHITE, font,
+    BG_DEEP, GREEN, HEADER_H, INK, LINE, MUTED, PAPER, RED, RED_BRIGHT,
+    WHITE, font,
 )
 
 
@@ -194,7 +195,8 @@ class SlotStrip(QWidget):
         for i in range(self._count):
             cell = QRectF(i * cw, 0, cw, h)
             on = (i + 1) in self._active
-            p.fillRect(cell, QColor(RED if on else PAPER))
+            # 占用格用绿色（连接成功语义），红色保留给 STOP / 错误
+            p.fillRect(cell, QColor(GREEN if on else PAPER))
             p.setPen(QPen(QColor(LINE), 1))
             p.drawRect(cell.adjusted(0.5, 0.5, -0.5, -0.5))
             p.setPen(QColor(WHITE if on else MUTED))
