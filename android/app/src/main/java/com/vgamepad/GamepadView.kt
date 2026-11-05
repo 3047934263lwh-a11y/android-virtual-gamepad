@@ -130,9 +130,11 @@ class GamepadView @JvmOverloads constructor(
         const val Z_LT = 40
         const val Z_RT = 41
 
-        const val DEADZONE = 0.02f          // 仅滤触控噪声；游戏内常见 10-20% 死区会叠加，
-                                            // 手机端死区必须足够小才能让"轻微动"有输出
-        const val STICK_GAMMA = 0.75f       // 低段增益指数：<1 放大小位移（raw=10% → 输出 ~16%）
+        const val DEADZONE = 0.01f          // 仅滤触控噪声——触屏无物理摇杆的漂移问题，死区可极低。
+                                            // 游戏端普遍再叠加 XInput 标准死区 8689/32767≈26%，
+                                            // 手机端死区必须足够小 + 低段强增益才能"轻推即动"
+        const val STICK_GAMMA = 0.65f       // 低段增益指数：<1 放大小位移（raw=10% → 输出 ~21%）
+                                            // 中高段近似线性，配合 1.3× 增益约推 74% 即满速
         const val STICK_MAX = 32767f
 
         /**
@@ -183,6 +185,27 @@ class GamepadView @JvmOverloads constructor(
     class Ctrl(var dx: Float = 0f, var dy: Float = 0f, var s: Float = 1f, var a: Float = 1f)
 
     private val layout = HashMap<String, Ctrl>()
+
+    /** 叠放次序（底→顶）：绘制按此序、命中按逆序；编辑选中即置顶 */
+    private val CTRL_ORDER_DEFAULT = listOf(
+        "LT", "RT", "LS", "RS", "DP", "Y", "A", "X", "B", "LB", "RB", "BACK", "GUIDE", "MENU"
+    )
+    private val zOrder = ArrayList(CTRL_ORDER_DEFAULT)
+
+    fun moveToFront(key: String) {
+        if (zOrder.remove(key)) zOrder.add(key)
+    }
+
+    fun zorderJson(): String = zOrder.joinToString(",")
+
+    fun loadZorder(json: String?) {
+        zOrder.clear()
+        zOrder.addAll(CTRL_ORDER_DEFAULT)
+        if (json.isNullOrBlank()) return
+        val wanted = json.split(",").map { it.trim() }
+            .filter { it in CTRL_ORDER_DEFAULT }.distinct()
+        for (k in wanted) { zOrder.remove(k); zOrder.add(k) }
+    }
     private val defCtrl = Ctrl()
     private fun ov(key: String): Ctrl = layout[key] ?: defCtrl
 
@@ -700,10 +723,10 @@ class GamepadView @JvmOverloads constructor(
                 for (key in CTRL_KEYS) {
                     val o = obj.optJSONObject(key) ?: continue
                     layout[key] = Ctrl(
-                        // 布局数据可能来自旧版本/备份恢复/被篡改，全部钳制到合法区间：
-                        // s=0 会摇杆除零得 NaN，s 极大会让阴影位图申请 OOM
-                        o.optDouble("dx", 0.0).toFloat().coerceIn(-1f, 1f),
-                        o.optDouble("dy", 0.0).toFloat().coerceIn(-1f, 1f),
+                        // 布局数据可能来自旧版本/备份恢复/被篡改，钳制到合法区间防 OOM/NaN；
+                        // ±2 允许合法的「屏幕外」位置（手指贴边拖拽可让中心越出屏幕约一个半径）
+                        o.optDouble("dx", 0.0).toFloat().coerceIn(-2f, 2f),
+                        o.optDouble("dy", 0.0).toFloat().coerceIn(-2f, 2f),
                         o.optDouble("s", 1.0).toFloat().coerceIn(MIN_CTRL_SCALE, MAX_CTRL_SCALE),
                         o.optDouble("a", 1.0).toFloat().coerceIn(0.05f, 1f)
                     )
@@ -713,11 +736,7 @@ class GamepadView @JvmOverloads constructor(
             }
         }
         computeLayout()
-        // 尺寸已知时再按屏幕边界收敛一次（View 未测量时 clampIntoBounds 自会跳过）
-        if (width > 0 && height > 0) {
-            for ((key, c) in layout) clampIntoBounds(key, c)
-            computeLayout()
-        }
+        // 不再按屏幕边界收敛：屏幕外的自定义位置原样保留
         invalidate()
     }
 
@@ -738,6 +757,7 @@ class GamepadView @JvmOverloads constructor(
 
     fun resetLayout() {
         layout.clear()
+        loadZorder(null)
         selectedKey = null
         computeLayout()
         invalidate()
@@ -747,27 +767,7 @@ class GamepadView @JvmOverloads constructor(
         val c = layout.getOrPut(key) { Ctrl() }
         c.s = scale.coerceIn(MIN_CTRL_SCALE, MAX_CTRL_SCALE)
         computeLayout()
-        clampIntoBounds(key, c)
-        computeLayout()
         invalidate()
-    }
-
-    /** 把控件矩形限制在屏幕内：允许全屏任意位置，但不允许整块拖出屏幕。 */
-    private fun clampIntoBounds(key: String, c: Ctrl) {
-        val W = width.toFloat()
-        val H = height.toFloat()
-        if (W <= 0f || H <= 0f) return
-        val r = outlineOf(key)
-        var fixX = 0f
-        var fixY = 0f
-        if (r.width() >= W) fixX = (W / 2f - r.centerX()) / W
-        else if (r.left < 0f) fixX = -r.left / W
-        else if (r.right > W) fixX = (W - r.right) / W
-        if (r.height() >= H) fixY = (H / 2f - r.centerY()) / H
-        else if (r.top < 0f) fixY = -r.top / H
-        else if (r.bottom > H) fixY = (H - r.bottom) / H
-        if (fixX != 0f) c.dx += fixX
-        if (fixY != 0f) c.dy += fixY
     }
 
     fun controlScale(key: String): Float = ov(key).s
@@ -1063,6 +1063,7 @@ class GamepadView @JvmOverloads constructor(
         val kBtn = (uiScale * buttonScale).coerceIn(0.45f, 2.20f)
         val kStick = (uiScale * stickScale).coerceIn(0.45f, 2.20f)
 
+
         val ls = ov("LS")
         val rs = ov("RS")
         lsR = base * 0.155f * kStick * ls.s
@@ -1201,20 +1202,26 @@ class GamepadView @JvmOverloads constructor(
 
         fun shown(k: String) = !isHidden(k)
 
-        if (shown("LT")) drawTrigger(canvas, rectLT, "LT", state.lt, "LT")
-        if (shown("RT")) drawTrigger(canvas, rectRT, "RT", state.rt, "RT")
-
-        if (shown("LS")) drawStick(canvas, lsCenter, lsKnob, lsR, lsKnobR, "LS")
-        if (shown("RS")) drawStick(canvas, rsCenter, rsKnob, rsR, rsKnobR, "RS")
-
-        if (shown("DP")) drawDpad(canvas)
-        if (shown("A") || shown("B") || shown("X") || shown("Y")) drawAbxy(canvas)
-
-        if (shown("LB")) drawPill(canvas, rectLB, "LB", (state.buttons and Btn.LB) != 0, "LB")
-        if (shown("RB")) drawPill(canvas, rectRB, "RB", (state.buttons and Btn.RB) != 0, "RB")
-        if (shown("BACK")) drawPill(canvas, rectBack, "BACK", (state.buttons and Btn.BACK) != 0, "BACK")
-        if (shown("GUIDE")) drawGuideButton(canvas)
-        if (shown("MENU")) drawMenuButton(canvas)
+        // 按叠放次序（底→顶）绘制；编辑选中即置顶，重叠时上层覆盖下层
+        for (k in zOrder) {
+            if (!shown(k)) continue
+            when (k) {
+                "LT" -> drawTrigger(canvas, rectLT, "LT", state.lt, "LT")
+                "RT" -> drawTrigger(canvas, rectRT, "RT", state.rt, "RT")
+                "LS" -> drawStick(canvas, lsCenter, lsKnob, lsR, lsKnobR, "LS")
+                "RS" -> drawStick(canvas, rsCenter, rsKnob, rsR, rsKnobR, "RS")
+                "DP" -> drawDpad(canvas)
+                "Y" -> drawFace(canvas, cY, "Y", rY)
+                "A" -> drawFace(canvas, cA, "A", rA)
+                "X" -> drawFace(canvas, cX, "X", rX)
+                "B" -> drawFace(canvas, cB, "B", rB)
+                "LB" -> drawPill(canvas, rectLB, "LB", (state.buttons and Btn.LB) != 0, "LB")
+                "RB" -> drawPill(canvas, rectRB, "RB", (state.buttons and Btn.RB) != 0, "RB")
+                "BACK" -> drawPill(canvas, rectBack, "BACK", (state.buttons and Btn.BACK) != 0, "BACK")
+                "GUIDE" -> drawGuideButton(canvas)
+                "MENU" -> drawMenuButton(canvas)
+            }
+        }
 
         drawStarBursts(canvas)
 
@@ -1835,6 +1842,7 @@ class GamepadView @JvmOverloads constructor(
                 val x = event.getX(i)
                 val y = event.getY(i)
                 selectedKey = zoneKey(zoneAt(x, y, editMode = true))
+                selectedKey?.let { moveToFront(it) }   // 被选中的键置顶，所见即所选
                 onSelectionChange?.invoke(selectedKey)
                 editLastX = x
                 editLastY = y
@@ -1852,20 +1860,9 @@ class GamepadView @JvmOverloads constructor(
                 c.dy += (y - editLastY) / height
                 editLastX = x
                 editLastY = y
+                // 不做任何边界收敛：允许把控件拖到屏幕外任意位置
+                //（完全拖出屏幕后，用设置里的「恢复默认布局」找回）
                 computeLayout()
-                clampIntoBounds(key, c)   // 全屏可拖，只保证控件不越出屏幕
-                computeLayout()
-
-                val o = outlineOf(key)
-                val halfW = (o.width() / 2f).coerceAtLeast(1f)
-                val halfH = (o.height() / 2f).coerceAtLeast(1f)
-                val ncx = clamp(o.centerX(), halfW * 0.55f, width - halfW * 0.55f)
-                val ncy = clamp(o.centerY(), halfH * 0.55f, height - halfH * 0.55f)
-                if (ncx != o.centerX() || ncy != o.centerY()) {
-                    c.dx += (ncx - o.centerX()) / width
-                    c.dy += (ncy - o.centerY()) / height
-                    computeLayout()
-                }
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
@@ -2101,40 +2098,45 @@ class GamepadView @JvmOverloads constructor(
     }
 
     private fun zoneAt(x: Float, y: Float, editMode: Boolean = false): Int {
-        val faceMul = if (editMode) 1.7f else 1.45f
-        if (hit("Y", hypot(x - cY.x, y - cY.y) <= rY * faceMul)) return Z_Y
-        if (hit("A", hypot(x - cA.x, y - cA.y) <= rA * faceMul)) return Z_A
-        if (hit("X", hypot(x - cX.x, y - cX.y) <= rX * faceMul)) return Z_X
-        if (hit("B", hypot(x - cB.x, y - cB.y) <= rB * faceMul)) return Z_B
-
-        if (hit("LB", rectLB.contains(x, y))) return Z_LB
-        if (hit("RB", rectRB.contains(x, y))) return Z_RB
-        if (hit("BACK", rectBack.contains(x, y))) return Z_BACK
-        if (hit("GUIDE", rGuide > 0f &&
-                hypot(x - cGuide.x, y - cGuide.y) <= rGuide * faceMul)) return Z_GUIDE
-        if (hit("MENU", rMenu > 0f &&
-                hypot(x - cMenu.x, y - cMenu.y) <= rMenu * faceMul)) return Z_MENU
-
-        if (hit("LT", rectLT.contains(x, y))) return Z_LT
-        if (hit("RT", rectRT.contains(x, y))) return Z_RT
-
-        val dx = x - dpCenter.x
-        val dy = y - dpCenter.y
-        val dpHit = if (editMode) dpR * 1.25f else dpR
-        val dpDist = hypot(dx, dy)
-        // 圆心附近不判方向，避免「点正中间 = 按下」这种误触
-        if (hit("DP", dpDist <= dpHit && dpDist > dpR * DPAD_CENTER_DEAD)) {
-            return if (abs(dx) > abs(dy)) {
-                if (dx < 0) Z_LEFT else Z_RIGHT
-            } else {
-                if (dy < 0) Z_UP else Z_DOWN
+        // 从最上层往下找：点哪个键就由哪个键响应（与绘制叠放次序严格一致）。
+        // 命中区 = 可视区（圆形键/摇杆取真实半径，胶囊/扳机取真实矩形），
+        // 不做任何外扩——按键区域外点击不触发
+        val faceMul = 1f
+        val stickMul = 1f
+        for (k in zOrder.asReversed()) {
+            if (hidden.contains(k)) continue
+            when (k) {
+                "Y" -> if (hypot(x - cY.x, y - cY.y) <= rY * faceMul) return Z_Y
+                "A" -> if (hypot(x - cA.x, y - cA.y) <= rA * faceMul) return Z_A
+                "X" -> if (hypot(x - cX.x, y - cX.y) <= rX * faceMul) return Z_X
+                "B" -> if (hypot(x - cB.x, y - cB.y) <= rB * faceMul) return Z_B
+                "LB" -> if (rectLB.contains(x, y)) return Z_LB
+                "RB" -> if (rectRB.contains(x, y)) return Z_RB
+                "BACK" -> if (rectBack.contains(x, y)) return Z_BACK
+                "GUIDE" -> if (rGuide > 0f &&
+                    hypot(x - cGuide.x, y - cGuide.y) <= rGuide * faceMul) return Z_GUIDE
+                "MENU" -> if (rMenu > 0f &&
+                    hypot(x - cMenu.x, y - cMenu.y) <= rMenu * faceMul) return Z_MENU
+                "LT" -> if (rectLT.contains(x, y)) return Z_LT
+                "RT" -> if (rectRT.contains(x, y)) return Z_RT
+                "LS" -> if (hypot(x - lsCenter.x, y - lsCenter.y) <= lsR * stickMul) return Z_LSTICK
+                "RS" -> if (hypot(x - rsCenter.x, y - rsCenter.y) <= rsR * stickMul) return Z_RSTICK
+                "DP" -> {
+                    val dx = x - dpCenter.x
+                    val dy = y - dpCenter.y
+                    val dpHit = dpR
+                    val dpDist = hypot(dx, dy)
+                    // 圆心附近不判方向，避免「点正中间 = 按下」这种误触
+                    if (dpDist <= dpHit && dpDist > dpR * DPAD_CENTER_DEAD) {
+                        return if (abs(dx) > abs(dy)) {
+                            if (dx < 0) Z_LEFT else Z_RIGHT
+                        } else {
+                            if (dy < 0) Z_UP else Z_DOWN
+                        }
+                    }
+                }
             }
         }
-
-        val stickMul = if (editMode) 1.25f else 1.35f
-        if (hit("LS", hypot(x - lsCenter.x, y - lsCenter.y) <= lsR * stickMul)) return Z_LSTICK
-        if (hit("RS", hypot(x - rsCenter.x, y - rsCenter.y) <= rsR * stickMul)) return Z_RSTICK
-
         return Z_NONE
     }
 

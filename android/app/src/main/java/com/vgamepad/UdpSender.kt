@@ -47,8 +47,9 @@ class UdpSender(private val state: GamepadState) {
         /** 本地回传来源端口：优先固定，便于防火墙/诊断；PC 端实际按「报文来源端口」回发 */
         const val REPLY_PORT = 26761
 
-        /** 125Hz，与主流手柄/键鼠回报率对齐 */
-        private const val SEND_HZ = 125
+        /** 250Hz：把发送排队延迟从平均 4ms 压到 2ms，20 字节小包仅 5KB/s，
+         *  手机 CPU 与 Wi-Fi 均无压力；PC 端 select(4ms) 逐包消化，同样无积压 */
+        private const val SEND_HZ = 250
     }
 
     /** 创建收发共用的套接字：强制绑定 IPv4 0.0.0.0（部分设备 udp6 通配收不到

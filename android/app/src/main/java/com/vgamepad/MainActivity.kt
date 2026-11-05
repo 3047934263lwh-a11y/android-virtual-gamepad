@@ -305,23 +305,27 @@ class MainActivity : AppCompatActivity() {
 
             override fun onStartTrackingTouch(sb: SeekBar) = Unit
             override fun onStopTrackingTouch(sb: SeekBar) {
-                prefs.edit().putString("layout_v1", gamepadView.layoutJson()).apply()
+                prefs.edit().putString("layout_v1", gamepadView.layoutJson())
+                    .putString("zorder_v1", gamepadView.zorderJson()).apply()
             }
         })
         resetOne.setOnClickListener {
             gamepadView.selectedKey?.let {
                 gamepadView.resetControl(it)
-                prefs.edit().putString("layout_v1", gamepadView.layoutJson()).apply()
+                prefs.edit().putString("layout_v1", gamepadView.layoutJson())
+                    .putString("zorder_v1", gamepadView.zorderJson()).apply()
             }
             updateEditBar()
         }
         resetAll.setOnClickListener {
             gamepadView.resetLayout()
-            prefs.edit().putString("layout_v1", gamepadView.layoutJson()).apply()
+            prefs.edit().putString("layout_v1", gamepadView.layoutJson())
+                    .putString("zorder_v1", gamepadView.zorderJson()).apply()
             updateEditBar()
         }
         done.setOnClickListener {
-            prefs.edit().putString("layout_v1", gamepadView.layoutJson()).apply()
+            prefs.edit().putString("layout_v1", gamepadView.layoutJson())
+                    .putString("zorder_v1", gamepadView.zorderJson()).apply()
             gamepadView.editMode = false
             editBar.visibility = android.view.View.GONE
         }
@@ -362,6 +366,7 @@ class MainActivity : AppCompatActivity() {
         else if (prefs.getBoolean("star_field", true)) 1 else 0   // 旧偏好迁移
         gamepadView.starBurstEnabled = prefs.getBoolean("star_burst", true)
         gamepadView.loadLayout(prefs.getString("layout_v1", null))
+        gamepadView.loadZorder(prefs.getString("zorder_v1", null))
         gamepadView.loadHidden(prefs.getString("hidden_keys", null))
         gamepadView.hapticsEnabled = hapticsOn
         applyHapticParams()
@@ -1268,8 +1273,10 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- 震动回传 ----------
 
-    /** 右摇杆灵敏度滑杆值（0–100）→ 增益：0→0.4×，50→1.0×（标准），100→1.6×。 */
-    private fun stickGain(p: Float): Float = 0.4f + p.coerceIn(0f, 100f) * 0.012f
+    /** 右摇杆灵敏度滑杆值（0–100）→ 增益：0→0.4×，50→1.3×（默认，鼠标感），100→2.2×。
+     *  增益提前饱和是设计意图：推约 74% 行程即达满速，等效缩短"行程"，
+     *  同时让轻推输出快速越过游戏端 XInput 死区（≈26%），消除迟滞感。 */
+    private fun stickGain(p: Float): Float = 0.4f + p.coerceIn(0f, 100f) * 0.018f
 
     /** 把 0–100 的三个触感滑杆值换算为 GamepadView 的实际参数。 */
     private fun applyHapticParams() {
@@ -1734,7 +1741,8 @@ class MainActivity : AppCompatActivity() {
             return
         }
         if (gamepadView.editMode) {
-            prefs.edit().putString("layout_v1", gamepadView.layoutJson()).apply()
+            prefs.edit().putString("layout_v1", gamepadView.layoutJson())
+                    .putString("zorder_v1", gamepadView.zorderJson()).apply()
             gamepadView.editMode = false
             editBar.visibility = View.GONE
             return
