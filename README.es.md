@@ -1,11 +1,23 @@
-# Tu móvil como mando · Mando virtual de Xbox 360 (Android → Windows)
+# 🎮 Android Virtual Gamepad
 
 **Idioma / Language**: [简体中文](README.md) · [English](README.en.md) · [日本語](README.ja.md) · [Español](README.es.md) · [Русский](README.ru.md)
 
-![License](https://img.shields.io/badge/license-MIT-green) ![Platform](https://img.shields.io/badge/platform-Windows%20%2B%20Android-blue) ![Transport](https://img.shields.io/badge/transport-UDP%20250Hz-orange) ![Version](https://img.shields.io/badge/release-v1.1.0-purple)
+## Convierte tu Android en un mando inalámbrico real de Xbox 360
 
-> **En una línea**: convierte tu móvil Android en un mando de Xbox 360 **reconocido de forma nativa**
-> por Windows. Conexión directa por LAN: los juegos ven un mando real, no un mapeo de teclado ni una macro.
+Sin comprar mando: conecta el móvil Android al PC con Windows por Wi-Fi y los juegos lo reconocen como un mando estándar de Xbox 360.
+
+**Funciones principales**
+
+- 🎮 **Emulación nativa**: compatible con juegos XInput de Windows.
+- 👥 **Multijugador local**: hasta 4 móviles conectados a la vez.
+- 🌀 **Aim por giroscopio**: usa el movimiento del móvil para la cámara.
+- 📳 **Vibración de vuelta**: la vibración del juego vuelve al móvil.
+- 🎨 **Personalización libre**: posición, tamaño, opacidad y disposición de cada control.
+- ⚡ **Baja latencia**: transmisión en tiempo real por UDP Wi-Fi.
+
+**Gratis · código abierto · sin mando físico**
+
+> «El móvil pone la entrada, el PC pone el juego. Cada móvil ocioso se convierte en mando.»
 
 ---
 

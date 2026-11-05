@@ -1,11 +1,23 @@
-# スマホをゲームパッドに · Android → Windows 仮想 Xbox 360 コントローラー
+# 🎮 Android Virtual Gamepad
 
 **言語 / Language**: [简体中文](README.md) · [English](README.en.md) · [日本語](README.ja.md) · [Español](README.es.md) · [Русский](README.ru.md)
 
-![License](https://img.shields.io/badge/license-MIT-green) ![Platform](https://img.shields.io/badge/platform-Windows%20%2B%20Android-blue) ![Transport](https://img.shields.io/badge/transport-UDP%20250Hz-orange) ![Version](https://img.shields.io/badge/release-v1.1.0-purple)
+## Android スマホを、本物の Xbox 360 ワイヤレスコントローラーに
 
-> **ひとことで**：Android スマホを Windows が**ネイティブ認識**する Xbox 360 コントローラーにします。
-> LAN 直結なので、ゲームから見れば本物のパッド——キーボードマッピングでもマクロでもありません。
+実機パッドは不要。Wi-Fi で Android スマホを Windows PC につなぐだけで、ゲームは標準の Xbox 360 コントローラーとして認識します。
+
+**主な機能**
+
+- 🎮 **ネイティブなコントローラー再現**：Windows の XInput ゲームに対応。
+- 👥 **ローカル多人数**：最大 4 台のスマホを同時接続。
+- 🌀 **ジャイロエイム**：スマホの動きでゲーム内の視点を操作。
+- 📳 **振動フィードバック**：ゲームの振動をスマホへ同期。
+- 🎨 **自由なカスタマイズ**：ボタンの位置・サイズ・透明度・配置を調整。
+- ⚡ **低遅延通信**：Wi-Fi UDP によるリアルタイム伝送。
+
+**無料 · オープンソース · 実機パッド不要**
+
+> «操作はスマホ、ゲームは PC。眠っているスマホをコントローラーに。»
 
 ---
 

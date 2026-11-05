@@ -1,11 +1,23 @@
-# Phone as a Gamepad · Virtual Xbox 360 Controller (Android → Windows)
+# 🎮 Android Virtual Gamepad
 
 **Language / 语言**: [简体中文](README.md) · [English](README.en.md) · [日本語](README.ja.md) · [Español](README.es.md) · [Русский](README.ru.md)
 
-![License](https://img.shields.io/badge/license-MIT-green) ![Platform](https://img.shields.io/badge/platform-Windows%20%2B%20Android-blue) ![Transport](https://img.shields.io/badge/transport-UDP%20250Hz-orange) ![Version](https://img.shields.io/badge/release-v1.1.0-purple)
+## Turn your Android phone into a real Xbox 360 wireless controller
 
-> **In one line**: turn your Android phone into a **natively recognised** Xbox 360 controller on Windows.
-> Direct over LAN — games see a real pad, not a keyboard mapper, not a macro, not an emulator.
+No controller to buy — connect your Android phone to a Windows PC over Wi-Fi and games recognise it as a standard Xbox 360 controller.
+
+**Core features**
+
+- 🎮 **Native controller emulation**: works with Windows XInput games.
+- 👥 **Local multiplayer**: up to 4 phones connected at the same time.
+- 🌀 **Gyro aiming**: use the phone's motion to control the in-game camera.
+- 📳 **Rumble feedback**: in-game vibration is sent back to the phone.
+- 🎨 **Full customisation**: move, resize, fade and re-layout every control.
+- ⚡ **Low-latency link**: real-time transport over Wi-Fi UDP.
+
+**Free · open source · no controller required**
+
+> «The phone handles the input, the PC runs the game. Every idle phone becomes a controller.»
 
 ---
 
