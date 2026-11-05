@@ -1,11 +1,23 @@
-# 手机变手柄 · Android → Windows 虚拟 Xbox 360 控制器
+# 🎮 Android Virtual Gamepad
 
 **语言 / Language**：[简体中文](README.md) · [English](README.en.md) · [日本語](README.ja.md) · [Español](README.es.md) · [Русский](README.ru.md)
 
-![License](https://img.shields.io/badge/license-MIT-green) ![Platform](https://img.shields.io/badge/platform-Windows%20%2B%20Android-blue) ![Transport](https://img.shields.io/badge/transport-UDP%20250Hz-orange) ![Version](https://img.shields.io/badge/release-v1.1.0-purple)
+## 把你的安卓手机，变成一只真正的 Xbox 360 无线手柄
 
-> **一句话**：把 Android 手机变成 Windows **原生识别**的 Xbox 360 手柄。
-> 局域网直连，游戏里看到的就是一只手柄——不是键鼠映射，不是宏，不是模拟器。
+无需购买实体手柄，通过 Wi-Fi 即可将安卓手机连接到 Windows 电脑，让游戏直接识别为标准 Xbox 360 控制器。
+
+**核心功能**
+
+- 🎮 **原生手柄模拟**：兼容 Windows XInput 游戏。
+- 👥 **本地多人游戏**：支持最多 4 台手机同时连接。
+- 🌀 **陀螺仪瞄准**：利用手机体感控制游戏视角。
+- 📳 **震动反馈**：将游戏震动同步传回手机。
+- 🎨 **自由定制**：调整按键位置、大小、透明度和布局。
+- ⚡ **低延迟通信**：采用 Wi-Fi UDP 实时传输。
+
+**免费 · 开源 · 无需购买实体手柄**
+
+> «手机负责操作，电脑负责运行游戏。让每一部闲置手机都成为游戏控制器。»
 
 ---
 
