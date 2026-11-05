@@ -48,7 +48,7 @@ README = """VIRTUAL GAMEPAD  ·  PC RECEIVER  ·  便携版 v1.0.0
 【目录】
 VirtualGamepadReceiver.exe     主程序（窗口程序，无控制台）
 _internal\\                     Python 运行时、Qt 运行库、Qt 插件、ViGEm 客户端
-config\\settings.ini           个人配置（首次运行自动生成，随文件夹一起走）
+config\\settings.ini           默认配置（随包分发，运行时自动更新，随文件夹一起走）
 LICENSE-*.txt                  随程序分发的第三方许可证
 可选驱动\\                      仅「虚拟手柄输出」需要的系统驱动（见下）
 error.log                      仅启动异常时生成，用于排查
@@ -128,7 +128,11 @@ def assemble() -> None:
         if os.path.isfile(src_name):
             shutil.copy2(src_name, os.path.join(OUT, dst_name))
 
-    os.makedirs(os.path.join(OUT, "config"), exist_ok=True)
+    cfg_dir = os.path.join(OUT, "config")
+    os.makedirs(cfg_dir, exist_ok=True)
+    # 预置默认配置：解压后目录结构完整，用户也可直接改端口后再分发
+    with open(os.path.join(cfg_dir, "settings.ini"), "w", encoding="utf-8") as fh:
+        fh.write("[General]\nport=26760\nauto=true\nvigem=true\ndebug=false\n")
     with open(os.path.join(OUT, "使用说明.txt"), "w", encoding="utf-8-sig") as fh:
         fh.write(README)
 
