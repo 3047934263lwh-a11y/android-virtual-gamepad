@@ -443,8 +443,10 @@ class AnimatedAction(QAbstractButton):
         p.save()
         p.setClipPath(shape)
 
-        # .circle: 20px -> 220px，opacity 0 -> 1
-        d = 20.0 + 200.0 * t_part
+        # .circle: 20px 起步扩散到覆盖整个按钮（圆心在中心，直径取对角线
+        # 长度 + 余量即恰好盖住四角；CSS 原值 220px 是其小容器下的覆盖态）
+        d_max = math.hypot(w, h) + 24.0
+        d = 20.0 + (d_max - 20.0) * t_part
         circle = QColor(self.LIME)
         circle.setAlphaF(min(1.0, t_part * 1.15))
         p.setPen(Qt.PenStyle.NoPen)
