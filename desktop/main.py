@@ -62,7 +62,7 @@ from style import (  # noqa: E402
     STATUSBAR_H, UNIT, WHITE, font,
 )
 from widgets import (  # noqa: E402
-    AnimatedAction, Block, DataTable, KeyValue, LogView, Metric, SlotStrip,
+    AnimatedAction, Block, DataTable, FlipCardGrid, KeyValue, LogView, Metric,
     Starfield, StickScope, TitleBar, WindowButton, rule, section,
 )
 
@@ -485,22 +485,24 @@ class MainWindow(QMainWindow):
         head.setObjectName("section")
         head.setFont(font(8, bold=True, tracking=1.2))
         lay.addWidget(head)
-        lay.addSpacing(28)
+        lay.addSpacing(16)
 
+        # 在线数与说明合并为一行，把纵向空间让给 2×2 卡片
+        info = QHBoxLayout()
         lab = QLabel("CONNECTED  ·  最多 4 台")
         lab.setObjectName("fieldLabel")
         lab.setFont(font(8, bold=True, tracking=0.8))
-        lay.addWidget(lab)
-        lay.addSpacing(8)
-
+        info.addWidget(lab, 1)
         self.device_number = QLabel("0 / 4")
         self.device_number.setObjectName("bigNumber")
-        self.device_number.setFont(font(54, bold=True))
-        lay.addWidget(self.device_number)
-        lay.addStretch(1)
+        self.device_number.setFont(font(13, bold=True))
+        info.addWidget(self.device_number)
+        lay.addLayout(info)
+        lay.addSpacing(12)
 
-        self.slot_strip = SlotStrip()
-        lay.addWidget(self.slot_strip)
+        # 2026-11-06：P1–P4 由槽位条改为 2×2 翻转卡片（悬停灰→绿），仅视觉
+        self.card_grid = FlipCardGrid()
+        lay.addWidget(self.card_grid, 1)
         return cell
 
     def _build_footer(self) -> QWidget:
@@ -772,7 +774,7 @@ class MainWindow(QMainWindow):
 
     def _on_snapshot(self, snap: dict) -> None:
         self.device_number.setText(f'{snap["online"]} / 4')
-        self.slot_strip.set_slots(snap["rows"])
+        self.card_grid.set_slots(snap["rows"])
         self.m_pps.set_value(str(snap["pps"]))
         self.m_loss.set_value(f'{snap["loss"]:.1f}%')
         self.m_online.set_value(str(snap["online"]))
@@ -837,7 +839,7 @@ class MainWindow(QMainWindow):
         if not running:
             self._last_rows = []
             self.device_number.setText("0 / 4")
-            self.slot_strip.set_slots([])
+            self.card_grid.set_slots([])
             self.table.clear_rows()
             self.scope_l.set_xy(0, 0)
             self.scope_r.set_xy(0, 0)

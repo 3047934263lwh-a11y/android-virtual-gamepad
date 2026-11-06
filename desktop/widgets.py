@@ -16,8 +16,9 @@ from PySide6.QtGui import (
     QColor, QPainter, QPainterPath, QPen, QRadialGradient,
 )
 from PySide6.QtWidgets import (
-    QAbstractButton, QFrame, QHBoxLayout, QHeaderView, QLabel, QPlainTextEdit,
-    QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QAbstractButton, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
+    QPlainTextEdit, QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout,
+    QWidget,
 )
 
 from style import (
@@ -730,3 +731,147 @@ class LogView(QPlainTextEdit):
             f'<span style="color:{INK}">{html.escape(message)}</span>'
         )
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+
+
+class FlipCard(QWidget):
+    """Uiverse.io by vamsidevendrakumar 翻转卡片的 Qt 自绘复刻。
+
+    原型为 CSS `rotateY(180deg)` + `backface-visibility:hidden`，正面灰、
+    背面绿，悬停 0.999s 翻转。Qt Widgets 没有 3D 透视，采用等价的水平压缩
+    方案：progress 0→1 过程中沿卡片中线按 |cos(π·progress)| 水平缩放；
+    progress 越过 0.5 后切换绘制背面——两面均为对称压缩、内容正向
+    （等价于 CSS 里背面预旋转 180° 后的呈现），视觉与 rotateY 翻页一致。
+
+    本组件只做视觉呈现：`set_row()` 由外部喂数据，不承载任何连接逻辑。
+    """
+
+    FRONT = QColor("#5B6270")     # 正面：灰（未连接/空闲）
+    BACK = GREEN                  # 背面：绿（连接成功语义，沿用调色板信号绿）
+    BORDER = 10                   # 对应 CSS border: 10px solid <同色>
+    RADIUS = 10                   # 对应 CSS border-radius: 10px
+    DURATION = 999                # 对应 CSS transition: transform .999s
+
+    def __init__(self, slot: int, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._slot = slot
+        self._row: dict | None = None
+        self._progress = 0.0
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(self.DURATION)
+        self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._anim.valueChanged.connect(self._on_anim)
+        self.setMinimumSize(120, 96)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_row(self, row: dict | None) -> None:
+        self._row = row
+        self.update()
+
+    # ---------- 翻转动画 ----------
+
+    def _on_anim(self, value) -> None:
+        self._progress = float(value)
+        self.update()
+
+    def enterEvent(self, event) -> None:      # noqa: N802
+        self._anim.stop()
+        self._anim.setStartValue(self._progress)
+        self._anim.setEndValue(1.0)
+        self._anim.start()
+
+    def leaveEvent(self, event) -> None:      # noqa: N802
+        self._anim.stop()
+        self._anim.setStartValue(self._progress)
+        self._anim.setEndValue(0.0)
+        self._anim.start()
+
+    # ---------- 绘制 ----------
+
+    def paintEvent(self, event) -> None:      # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = float(self.width()), float(self.height())
+        sx = math.cos(math.pi * self._progress)
+        if abs(sx) < 0.02:
+            p.end()
+            return
+        p.translate(w / 2.0, h / 2.0)
+        p.scale(abs(sx), 1.0)
+        p.translate(-w / 2.0, -h / 2.0)
+        rect = QRectF(0.0, 0.0, w, h)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(self.BACK if sx < 0 else self.FRONT)
+        p.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
+        # 内缩 BORDER，对应 CSS 的 10px 同色边框（内容区居中）
+        inner = rect.adjusted(self.BORDER, self.BORDER,
+                              -self.BORDER, -self.BORDER)
+        p.setPen(QColor(WHITE))
+        if sx < 0:
+            self._paint_back(p, inner)
+        else:
+            self._paint_front(p, inner)
+        p.end()
+
+    def _paint_front(self, p: QPainter, rect: QRectF) -> None:
+        on = self._row is not None
+        p.setFont(font(20, bold=True, tracking=2.0))
+        p.drawText(rect.adjusted(0, -10, 0, -18),
+                   Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
+                   f"P{self._slot}")
+        p.setFont(font(8.5, bold=True, tracking=1.0))
+        p.setPen(QColor(WHITE if on else "#D8DEE8"))
+        p.drawText(rect.adjusted(0, 14, 0, 0),
+                   Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                   "已连接" if on else "未连接 · 空位")
+
+    def _paint_back(self, p: QPainter, rect: QRectF) -> None:
+        r = self._row
+        p.setFont(font(11, bold=True, tracking=1.2))
+        p.drawText(rect.adjusted(0, -16, 0, -30),
+                   Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
+                   f"P{self._slot} · 已连接" if r else f"P{self._slot} · 空位")
+        p.setFont(font(8.5, mono=True))
+        p.setPen(QColor("#EAF7EF"))
+        lines = []
+        if r:
+            lines.append(f"{r.get('ip', '-')}:{r.get('port', 0)}")
+            lines.append(f"{r.get('pps', 0)} pps · 序列 {r.get('seq', 0)}")
+            btns = r.get("buttons") or []
+            lines.append(" · ".join(btns[:4]) if btns else "无按键")
+        else:
+            lines.append("等待设备接入")
+            lines.append("该槽位当前空闲")
+        y = rect.top() + 6
+        for ln in lines:
+            p.drawText(QRectF(rect.left(), y, rect.width(), 16),
+                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                       ln)
+            y += 16
+
+
+class FlipCardGrid(QWidget):
+    """P1–P4 四张翻转卡，2×2 四方格排列，均匀填满所在区域。
+
+    仅视觉容器：`set_slots()` 与原 SlotStrip 接收同一份 rows 快照，
+    不改变任何连接 / 快照逻辑。
+    """
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("cardGrid")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        grid = QGridLayout(self)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(12)
+        self.cards: list[FlipCard] = [FlipCard(i + 1) for i in range(4)]
+        for pos, card in zip(((0, 0), (0, 1), (1, 0), (1, 1)), self.cards):
+            grid.addWidget(card, *pos)
+        for r in (0, 1):
+            grid.setRowStretch(r, 1)
+        for c in (0, 1):
+            grid.setColumnStretch(c, 1)
+
+    def set_slots(self, rows: list[dict]) -> None:
+        by_slot = {int(r["slot"]): r for r in rows}
+        for card in self.cards:
+            card.set_row(by_slot.get(card._slot))
