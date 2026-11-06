@@ -150,8 +150,8 @@ class MainWindow(QMainWindow):
 
         if self.selftest_dir:
             QTimer.singleShot(180, self._selftest_start)
-        elif self.auto_cb.isChecked():
-            QTimer.singleShot(120, self.start_listen)
+        # 2026-11-06 修复：应用启动后固定为「已停止」状态，
+        # 不再自动开始监听，需要用户手动点 START（或 CTRL+S）。
 
     # ---------- 界面构建 ----------
 
@@ -691,7 +691,9 @@ class MainWindow(QMainWindow):
     def _load_settings(self) -> None:
         st = self.settings
         self.port_edit.setText(str(st.value("port", DEFAULT_PORT)))
-        self.auto_cb.setChecked(str(st.value("auto", "true")).lower() == "true")
+        # "auto"（启动时自动监听）已于 2026-11-06 移除：应用固定以停止状态启动。
+        # 此行保留空实现以兼容旧配置文件中的 auto 键（读取后忽略）。
+        st.value("auto", "false")
         self.vigem_cb.setChecked(str(st.value("vigem", "true")).lower() == "true")
         self.debug_cb.setChecked(str(st.value("debug", "false")).lower() == "true")
         geo = st.value("geometry")
@@ -703,7 +705,6 @@ class MainWindow(QMainWindow):
             return
         st = self.settings
         st.setValue("port", self.port_edit.text())
-        st.setValue("auto", self.auto_cb.isChecked())
         st.setValue("vigem", self.vigem_cb.isChecked())
         st.setValue("debug", self.debug_cb.isChecked())
         st.setValue("geometry", self.saveGeometry())
@@ -714,7 +715,6 @@ class MainWindow(QMainWindow):
             self._log("warn", "请先停止监听再修改默认配置")
             return
         self.port_edit.setText(str(DEFAULT_PORT))
-        self.auto_cb.setChecked(True)
         self.vigem_cb.setChecked(True)
         self.debug_cb.setChecked(False)
         self._save_settings()
