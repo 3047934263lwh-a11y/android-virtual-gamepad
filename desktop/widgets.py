@@ -939,8 +939,21 @@ class FlipCard(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = float(self.width()), float(self.height())
-        sx = math.cos(math.pi * self._progress)
-        if abs(sx) < 0.02:
+        # 真实 3D 翻转（对应 CSS perspective:1000px + rotateY(180deg)）：
+        # 绕竖直中轴旋转，透视除法产生近大远小的梯形观感。
+        # 射影矩阵推导（卡面 z=0，相机距离 d）：
+        #   旋转 θ: x'=x·cosθ, z'=-x·sinθ；透视: 缩放 d/(d+x·sinθ)
+        #   ⇒ X = cosθ·x / (1 + (sinθ/d)·x)，Y = y / (1 + (sinθ/d)·x)
+        # 越过 90° 换画背面（背面等效角 θ-180°，恒 cos>0，内容正向）。
+        theta = math.pi * self._progress
+        d = 1000.0
+        if self._progress <= 0.5:
+            ct, st = math.cos(theta), math.sin(theta)
+            back = False
+        else:
+            ct, st = -math.cos(theta), -math.sin(theta)
+            back = True
+        if abs(ct) < 0.02:
             p.end()
             return
         rx, ry = self._tilt.x(), self._tilt.y()
@@ -953,12 +966,19 @@ class FlipCard(QWidget):
         tr.rotate(ry, Qt.Axis.YAxis)
         tr.rotate(rx, Qt.Axis.XAxis)
         tr.translate(-rect.center().x(), -rect.center().y())
-        p.setTransform(tr)
-        # 翻转压缩：以左缘为转轴（translate 到左缘再缩放），像书页一样
-        # 从最左侧翻开/合上；倾斜已含在内层变换，叠加无冲突
-        p.translate(rect.left(), 0.0)
-        p.scale(abs(sx), 1.0)
-        p.translate(-rect.left(), 0.0)
+        # rotateY 射影矩阵（绕竖直中轴）
+        rot = QTransform(ct, 0.0, st / d,
+                         0.0, 1.0, 0.0,
+                         0.0, 0.0, 1.0)
+        cx = rect.center().x()
+        t_off = QTransform(1.0, 0.0, 0.0,
+                           0.0, 1.0, 0.0,
+                           -cx, 0.0, 1.0)          # 卡心移到原点
+        t_back = QTransform(1.0, 0.0, 0.0,
+                            0.0, 1.0, 0.0,
+                            cx, 0.0, 1.0)          # 移回
+        p.setTransform(tr)                         # 先倾斜
+        p.setTransform(tr * t_off * rot * t_back)  # 再绕中轴透视翻转
         # 柔和投影随倾斜偏移（玻璃浮在星空之上）
         sh_dx = -ry * 0.75
         sh_dy = 12.0 + rx * 0.5
@@ -1013,10 +1033,10 @@ class FlipCard(QWidget):
         # 未连接：内缘旋转亮线（画在卡体之上）
         if self._row is None:
             self._paint_glow_ring(p, rect)
-        # 内容区
+        # 内容区（越过 90° 后画背面，内容正向不镜像）
         inner = rect.adjusted(self.BORDER, self.BORDER,
                               -self.BORDER, -self.BORDER)
-        if sx < 0:
+        if back:
             self._paint_back(p, inner)
         else:
             self._paint_front(p, inner)
