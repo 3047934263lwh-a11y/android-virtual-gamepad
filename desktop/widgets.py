@@ -13,7 +13,8 @@ from PySide6.QtCore import (
     QVariantAnimation, Signal,
 )
 from PySide6.QtGui import (
-    QColor, QFontMetricsF, QPainter, QPainterPath, QPen, QRadialGradient,
+    QBrush, QColor, QFontMetricsF, QLinearGradient, QPainter, QPainterPath,
+    QPen, QRadialGradient,
 )
 from PySide6.QtWidgets import (
     QAbstractButton, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
@@ -755,10 +756,13 @@ class FlipCard(QWidget):
     # 卡内中文字号：原 8.5pt / 11pt 的 5 倍；超宽时按卡片宽度自动收缩适配
     BIG_PT = 8.5 * 5
     # 漂浮动效（Uiverse.io by dexter-st 的 @keyframes hover，只取漂浮）：
-    # 周期 1s（原 3s 的 3 倍帧率），峰值上浮 7px + 放大 1.02
+    # 基准周期 3s（比 1s 慢 3 倍），每张卡再随机化时长/幅度/相位，避免整排同步
     FLOAT_AMP = 7.0
     FLOAT_SCALE = 0.02
-    FLOAT_SEC = 1000
+    # 悬浮质感 + 线性光效（Uiverse.io by ElSombrero2，只取三样）：
+    # ① 多层柔和阴影的悬浮质感 ② 未连接时四周旋转线性光效 ③ 随机化漂浮
+    SHADOW_SPREAD = 8             # 阴影最大扩散半径（计入绘制余量）
+    GLOW_MS_PER_ROUND = 5000      # 线性光效旋转一圈 5s（对应 rotation_481）
 
     def __init__(self, slot: int, parent: QWidget | None = None):
         super().__init__(parent)
@@ -771,15 +775,19 @@ class FlipCard(QWidget):
         self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
         self._anim.valueChanged.connect(self._on_anim)
         # 漂浮：-1→1 线性 + InOutSine，phase=1-|v| 形成无接缝的三角往复；
-        # 不依赖 QVariantAnimation 的循环换向语义，两端平滑无跳变
+        # 不依赖 QVariantAnimation 的循环换向语义，两端平滑无跳变。
+        # 每张卡随机化时长（基准 3s ±0.5s）/幅度/相位，互不同步
+        self._float_amp = random.uniform(5.0, 9.0)
+        dur = random.randint(2500, 3500)
         self._float_anim = QVariantAnimation(self)
-        self._float_anim.setDuration(self.FLOAT_SEC)
+        self._float_anim.setDuration(dur)
         self._float_anim.setStartValue(-1.0)
         self._float_anim.setEndValue(1.0)
         self._float_anim.setEasingCurve(QEasingCurve.Type.InOutSine)
         self._float_anim.setLoopCount(-1)          # 无限循环
         self._float_anim.valueChanged.connect(self._on_float)
         self._float_anim.start()
+        self._float_anim.setCurrentTime(random.randint(0, dur))   # 随机相位
         self.setMinimumSize(120, 96)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
@@ -830,6 +838,39 @@ class FlipCard(QWidget):
 
     # ---------- 绘制 ----------
 
+    def _glow_gradient(self, rect: QRectF, angle_deg: float,
+                       bright: int) -> QLinearGradient:
+        """绕卡心旋转的线性渐变（transparent → #ff9966 → transparent）。"""
+        diag = math.hypot(rect.width(), rect.height()) / 2.0
+        a = math.radians(angle_deg)
+        cx, cy = rect.center().x(), rect.center().y()
+        dx, dy = math.cos(a) * diag, math.sin(a) * diag
+        g = QLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy)
+        g.setColorAt(0.00, QColor(255, 153, 102, 0))
+        g.setColorAt(0.30, QColor(255, 153, 102, bright))
+        g.setColorAt(0.50, QColor(255, 201, 166, bright))
+        g.setColorAt(0.70, QColor(255, 153, 102, bright))
+        g.setColorAt(1.00, QColor(255, 153, 102, 0))
+        return g
+
+    def _paint_glow_halo(self, p: QPainter, rect: QRectF) -> None:
+        """未连接光效·外圈：柔光晕（画在卡体之下，四周露出边缘光晕）。"""
+        ang = (time.monotonic() * 360.0 / self.GLOW_MS_PER_ROUND) % 360.0
+        g_halo = self._glow_gradient(rect, ang, 110)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QBrush(g_halo), 8))
+        p.drawRoundedRect(rect.adjusted(-4, -4, 4, 4),
+                          self.RADIUS + 4, self.RADIUS + 4)
+
+    def _paint_glow_ring(self, p: QPainter, rect: QRectF) -> None:
+        """未连接光效·内缘：亮线描边（画在卡体之上，不会被卡体覆盖）。"""
+        ang = (time.monotonic() * 360.0 / self.GLOW_MS_PER_ROUND) % 360.0 + 120.0
+        g_ring = self._glow_gradient(rect, ang, 235)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QBrush(g_ring), 3))
+        p.drawRoundedRect(rect.adjusted(2, 2, -2, -2),
+                          self.RADIUS - 2, self.RADIUS - 2)
+
     def paintEvent(self, event) -> None:      # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -838,20 +879,33 @@ class FlipCard(QWidget):
         if abs(sx) < 0.02:
             p.end()
             return
-        # 动态余量：垂直 = 上浮幅度 + 放大外扩 + 安全边；水平 = 放大外扩 + 安全边。
-        # 保证任何相位下 (上浮+放大) 的合成边界都落在控件内，绝不裁切。
-        mv = self.FLOAT_AMP + self.FLOAT_SCALE * h / 2.0 + 1.0
-        mh = self.FLOAT_SCALE * w / 2.0 + 1.0
+        # 动态余量：垂直 = 上浮幅度 + 放大外扩 + 阴影扩散 + 安全边；
+        # 水平 = 放大外扩 + 阴影扩散 + 安全边。任何相位不裁切。
+        mv = (self._float_amp + self.FLOAT_SCALE * h / 2.0
+              + self.SHADOW_SPREAD + 1.0)
+        mh = self.FLOAT_SCALE * w / 2.0 + self.SHADOW_SPREAD + 1.0
         rect = QRectF(mh, mv, w - 2.0 * mh, h - 2.0 * mv)
-        # 漂浮：上浮 FLOAT_AMP×phase，内容放大 1+FLOAT_SCALE×phase
-        fy = -self.FLOAT_AMP * self._float
+        # 漂浮：上浮 幅度×phase，内容放大 1+FLOAT_SCALE×phase
+        fy = -self._float_amp * self._float
         k = 1.0 + self.FLOAT_SCALE * self._float
         p.translate(rect.center().x(), rect.center().y() + fy)
         p.scale(abs(sx) * k, k)
         p.translate(-rect.center().x(), -rect.center().y())
+        # 悬浮质感：多层柔和阴影（随卡片一起漂浮）
+        for spread, alpha in ((2, 70), (4, 45), (7, 26)):
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(0, 0, 0, alpha))
+            sh = rect.adjusted(-spread, -spread + 2, spread, spread + 2)
+            p.drawRoundedRect(sh, self.RADIUS + spread, self.RADIUS + spread)
+        # 未连接：四周旋转线性光效（外圈光晕画在卡体之下，露出边缘光晕）
+        if self._row is None:
+            self._paint_glow_halo(p, rect)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(self.BACK if sx < 0 else self.FRONT)
         p.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
+        # 未连接：内缘亮线画在卡体之上（外圈光晕已在卡体之前画过）
+        if self._row is None:
+            self._paint_glow_ring(p, rect)
         # 内缩 BORDER，对应 CSS 的 10px 同色边框（内容区居中）
         inner = rect.adjusted(self.BORDER, self.BORDER,
                               -self.BORDER, -self.BORDER)
