@@ -853,15 +853,6 @@ class FlipCard(QWidget):
         g.setColorAt(1.00, QColor(255, 153, 102, 0))
         return g
 
-    def _paint_glow_halo(self, p: QPainter, rect: QRectF) -> None:
-        """未连接光效·外圈：柔光晕（画在卡体之下，四周露出边缘光晕）。"""
-        ang = (time.monotonic() * 360.0 / self.GLOW_MS_PER_ROUND) % 360.0
-        g_halo = self._glow_gradient(rect, ang, 110)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(QBrush(g_halo), 8))
-        p.drawRoundedRect(rect.adjusted(-4, -4, 4, 4),
-                          self.RADIUS + 4, self.RADIUS + 4)
-
     def _paint_glow_ring(self, p: QPainter, rect: QRectF) -> None:
         """未连接光效·内缘：亮线描边（画在卡体之上，不会被卡体覆盖）。"""
         ang = (time.monotonic() * 360.0 / self.GLOW_MS_PER_ROUND) % 360.0 + 120.0
@@ -897,13 +888,11 @@ class FlipCard(QWidget):
             p.setBrush(QColor(0, 0, 0, alpha))
             sh = rect.adjusted(-spread, -spread + 2, spread, spread + 2)
             p.drawRoundedRect(sh, self.RADIUS + spread, self.RADIUS + spread)
-        # 未连接：四周旋转线性光效（外圈光晕画在卡体之下，露出边缘光晕）
-        if self._row is None:
-            self._paint_glow_halo(p, rect)
+        # 未连接：四周旋转线性光效（仅内缘细亮线）
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(self.BACK if sx < 0 else self.FRONT)
         p.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
-        # 未连接：内缘亮线画在卡体之上（外圈光晕已在卡体之前画过）
+        # 未连接：内缘亮线画在卡体之上，旋转线性光效只保留这一条细线
         if self._row is None:
             self._paint_glow_ring(p, rect)
         # 内缩 BORDER，对应 CSS 的 10px 同色边框（内容区居中）
