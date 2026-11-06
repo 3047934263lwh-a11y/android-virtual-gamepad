@@ -848,17 +848,53 @@ class FlipCard(QWidget):
                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
                    text)
 
+    def _equal_height_fonts(self, latin: str, rest: str, s: float,
+                            max_w: float) -> tuple[QFont, QFont, float]:
+        """P# 与中文字形等高（等高），整行居中且宽度视觉平衡。
+
+        Bogle 的拉丁大写字面高约为 CJK 表意字的 70%，同字号下 P1 会明显
+        偏矮；此处按字面高度比放大拉丁字号，使两者视觉等高，再整行按
+        卡宽收缩适配。返回 (拉丁字体, 中文/剩余字体, 整行宽度)。
+        """
+        f_lat = font(s, bold=True)
+        f_cjk = font(s, bold=True)
+        h_lat = QFontMetricsF(f_lat).boundingRect(latin).height()
+        h_cjk = QFontMetricsF(f_cjk).boundingRect("已").height()
+        if h_lat > 0 and h_cjk > 0:
+            f_lat = font(s * h_cjk / h_lat, bold=True)
+        w = (QFontMetricsF(f_lat).horizontalAdvance(latin)
+             + QFontMetricsF(f_cjk).horizontalAdvance(rest))
+        if w > max_w > 0:
+            k = max_w / w
+            f_lat = font((s * h_cjk / h_lat if h_lat > 0 and h_cjk > 0 else s) * k,
+                         bold=True)
+            f_cjk = font(s * k, bold=True)
+            w = (QFontMetricsF(f_lat).horizontalAdvance(latin)
+                 + QFontMetricsF(f_cjk).horizontalAdvance(rest))
+        return f_lat, f_cjk, w
+
+    def _draw_balanced_title(self, p: QPainter, rect: QRectF,
+                             latin: str, rest: str) -> None:
+        """以基线对齐绘制「P# + 中文」混合标题：等高、居中、视觉平衡。"""
+        f_lat, f_cjk, w = self._equal_height_fonts(
+            latin, rest, self.BIG_PT, rect.width())
+        m_lat, m_cjk = QFontMetricsF(f_lat), QFontMetricsF(f_cjk)
+        x0 = rect.center().x() - w / 2.0
+        baseline = rect.bottom() - max(m_lat.descent(), m_cjk.descent()) - 2.0
+        p.setPen(QColor(WHITE))
+        p.setFont(f_lat)
+        p.drawText(QPointF(x0, baseline), latin)
+        p.setFont(f_cjk)
+        p.drawText(QPointF(x0 + m_lat.horizontalAdvance(latin), baseline), rest)
+
     def _paint_back(self, p: QPainter, rect: QRectF) -> None:
         r = self._row
-        # 底部：状态标题大字（中文部分放大 5 倍，整行按卡宽收缩适配）
-        title = f"P{self._slot} · 已连接" if r else f"P{self._slot} · 空位"
-        tf = self._fit_font(title, self.BIG_PT, rect.width())
-        p.setFont(tf)
-        p.setPen(QColor(WHITE))
-        p.drawText(rect,
-                   Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
-                   title)
-        title_h = QFontMetricsF(tf).height()
+        # 底部：状态标题（P# 与中文等高、整行居中平衡）
+        latin = f"P{self._slot}"
+        rest = " · 已连接" if r else " · 空位"
+        self._draw_balanced_title(p, rect, latin, rest)
+        title_h = max(QFontMetricsF(font(self.BIG_PT, bold=True)).height(),
+                      24.0)
         mid_bottom = rect.bottom() - title_h - 6
 
         if r:

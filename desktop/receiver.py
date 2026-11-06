@@ -25,7 +25,8 @@ VERSION = 1
 PACKET_SIZE = 20
 IDLE_RESET_SEC = 1.2
 MAX_PLAYERS = 4
-SLOT_TTL_SEC = 300.0
+SLOT_TTL_SEC = 5.0    # 手机主动断开后不再发包，5 秒即释放槽位并刷新 UI；
+                      # 原 300s 会导致「手机已断开，PC 仍显示已连接」
 SELECT_TIMEOUT = 0.004          # 4ms：250Hz 报文下既不过度空转，也不引入排队延迟
 SNAPSHOT_SEC = 0.10            # UI 快照 10Hz，避免 250Hz 刷新把界面打爆
 REPORT_SEC = 0.25              # 回传链路实测速率的结算周期：连上 250ms 内即可显示真实速率
@@ -464,7 +465,7 @@ class Receiver(QObject):
                     free_slots.sort()
                     rate_window[p.idx] = 0
                     loss_window[p.idx] = 0
-                    self.log.emit("info", f"{p.idx + 1}P 离线超过 5 分钟，槽位已释放")
+                    self.log.emit("info", f"{p.idx + 1}P 离线超过 5 秒，槽位已释放")
 
                 # 链路实收速率：先结算本周期再回传，避免「发的是上一秒的值」
                 # 造成首秒 0、第二秒才跳到 220+ 的先低后高观感。
