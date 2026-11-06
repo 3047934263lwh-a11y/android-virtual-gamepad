@@ -754,16 +754,32 @@ class FlipCard(QWidget):
     DURATION = 999                # 对应 CSS transition: transform .999s
     # 卡内中文字号：原 8.5pt / 11pt 的 5 倍；超宽时按卡片宽度自动收缩适配
     BIG_PT = 8.5 * 5
+    # 漂浮动效（Uiverse.io by dexter-st 的 @keyframes hover，只取漂浮）：
+    # 3s 循环，峰值为上浮 7px + 放大 1.02，ease 往复
+    FLOAT_AMP = 7.0
+    FLOAT_SCALE = 0.02
+    FLOAT_SEC = 3000
 
     def __init__(self, slot: int, parent: QWidget | None = None):
         super().__init__(parent)
         self._slot = slot
         self._row: dict | None = None
         self._progress = 0.0
+        self._float = 0.0              # 漂浮相位 0..1（峰值=上浮+放大）
         self._anim = QVariantAnimation(self)
         self._anim.setDuration(self.DURATION)
         self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
         self._anim.valueChanged.connect(self._on_anim)
+        # 漂浮：-1→1 线性 + InOutSine，phase=1-|v| 形成无接缝的三角往复；
+        # 不依赖 QVariantAnimation 的循环换向语义，两端平滑无跳变
+        self._float_anim = QVariantAnimation(self)
+        self._float_anim.setDuration(self.FLOAT_SEC)
+        self._float_anim.setStartValue(-1.0)
+        self._float_anim.setEndValue(1.0)
+        self._float_anim.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self._float_anim.setLoopCount(-1)          # 无限循环
+        self._float_anim.valueChanged.connect(self._on_float)
+        self._float_anim.start()
         self.setMinimumSize(120, 96)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
@@ -797,6 +813,13 @@ class FlipCard(QWidget):
         self._progress = float(value)
         self.update()
 
+    # ---------- 漂浮动效（Uiverse.io by dexter-st，只取漂浮） ----------
+
+    def _on_float(self, value) -> None:
+        # v ∈ [-1, 1]：phase = 1-|v| 在中点达到峰值 1，两端归零，无接缝往复
+        self._float = 1.0 - abs(float(value))
+        self.update()
+
     def enterEvent(self, event) -> None:      # noqa: N802
         # 悬停翻到背面预览；已连接的卡本来就在背面，保持不动
         self._animate_to(1.0)
@@ -815,10 +838,15 @@ class FlipCard(QWidget):
         if abs(sx) < 0.02:
             p.end()
             return
-        p.translate(w / 2.0, h / 2.0)
-        p.scale(abs(sx), 1.0)
-        p.translate(-w / 2.0, -h / 2.0)
-        rect = QRectF(0.0, 0.0, w, h)
+        # 绘制区上下各预留 FLOAT_AMP，漂浮时卡片在余量内升降，永不裁切
+        m = self.FLOAT_AMP
+        rect = QRectF(0.0, m, w, h - 2.0 * m)
+        # 漂浮：上浮 m×phase（回到上余量顶），内容放大 1+FLOAT_SCALE×phase
+        fy = -m * self._float
+        k = 1.0 + self.FLOAT_SCALE * self._float
+        p.translate(rect.center().x(), rect.center().y() + fy)
+        p.scale(abs(sx) * k, k)
+        p.translate(-rect.center().x(), -rect.center().y())
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(self.BACK if sx < 0 else self.FRONT)
         p.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
