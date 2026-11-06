@@ -9,12 +9,12 @@ import time
 from datetime import datetime
 
 from PySide6.QtCore import (
-    QEasingCurve, QLineF, QPoint, QPointF, QRectF, Qt, QTimer,
+    QEasingCurve, QLineF, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer,
     QVariantAnimation, Signal,
 )
 from PySide6.QtGui import (
-    QBrush, QColor, QFontMetricsF, QLinearGradient, QPainter, QPainterPath,
-    QPen, QRadialGradient, QTransform,
+    QBrush, QColor, QFontMetricsF, QImage, QLinearGradient, QPainter,
+    QPainterPath, QPen, QRadialGradient, QTransform,
 )
 from PySide6.QtWidgets import (
     QAbstractButton, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
@@ -735,41 +735,44 @@ class LogView(QPlainTextEdit):
 
 
 class FlipCard(QWidget):
-    """Uiverse.io by vamsidevendrakumar 翻转卡片的 Qt 自绘复刻。
+    """液态玻璃（Liquid Glass）翻转卡片。
 
-    原型为 CSS `rotateY(180deg)` + `backface-visibility:hidden`，正面灰、
-    背面绿，悬停 0.999s 翻转。Qt Widgets 没有 3D 透视，采用等价的水平压缩
-    方案：progress 0→1 过程中沿卡片中线按 |cos(π·progress)| 水平缩放；
-    progress 越过 0.5 后切换绘制背面——两面均为对称压缩、内容正向
-    （等价于 CSS 里背面预旋转 180° 后的呈现），视觉与 rotateY 翻页一致。
+    视觉：苹果 Liquid Glass 设计语言——半透明磨砂质感（实时模糊星空
+    背景）、细腻高光边缘、底部折射亮边、随光标游走的镜面眩光。
+    正面为透明玻璃（未连接），背面为绿色玻璃（已连接）。
 
-    本组件只做视觉呈现：`set_row()` 由外部喂数据，不承载任何连接逻辑；
-    设备接入 / 断开时自动翻转到对应面（绿=已连接，灰=空闲），
-    悬停仍可临时预览背面，移开后回到设备状态对应的面。
+    翻转采用 |cos(π·progress)| 水平压缩方案（progress 越过 0.5 切换
+    背面），两面内容均正向绘制，视觉与 CSS rotateY 翻页一致。
+
+    翻转面由单一决策点 `_target_progress()` 统一裁定，任何状态变化
+    （接入/断开/悬停/点击）都经 `_sync_face()` 从当前进度平滑重定向，
+    动画中途切换状态不会跳变，也不会互相覆盖：
+      已连接 → 背面（绿色玻璃，显示设备详情）
+      空闲 + 悬停 → 背面预览，移开回落
+      空闲 + 点击 → 背面预览并保持（再次点击回落；修复原「点击无响应」）
+      其余 → 正面
     """
 
-    FRONT = QColor("#5B6270")     # 正面：灰（未连接/空闲）
-    BACK = GREEN                  # 背面：绿（连接成功语义，沿用调色板信号绿）
-    BORDER = 10                   # 对应 CSS border: 10px solid <同色>
-    RADIUS = 10                   # 对应 CSS border-radius: 10px
-    DURATION = 999                # 对应 CSS transition: transform .999s
+    BORDER = 16                  # 玻璃卡内容边距
+    RADIUS = 20                  # 液态玻璃圆角
+    DURATION = 999               # 翻转时长（对应 CSS transition .999s）
     # 卡内中文字号：原 8.5pt / 11pt 的 5 倍；超宽时按卡片宽度自动收缩适配
     BIG_PT = 8.5 * 5
-    # 3D 悬停物理（Uiverse.io by ommanav_2060，只取动效）：
-    # 鼠标在卡上移动 → 卡片朝鼠标方向倾斜（±12°）+ 阴影随倾斜偏移 +
-    # 白色眩光跟随鼠标移动；移开后 0.6s 回正。倾斜角度与原型 3×3
-    # tracker 网格一致，但做连续映射（更顺滑）。
-    TILT_DEG = 12.0               # 对应原型 rotateX/rotateY 的 ±12°
-    TILT_MS = 400                 # 对应 transition: transform .4s
-    TILT_RETURN_MS = 600          # 对应非悬停复位 transition .6s
-    SHADOW_SPREAD = 8             # 阴影最大扩散半径（计入绘制余量）
-    GLOW_MS_PER_ROUND = 5000      # 线性光效旋转一圈 5s（对应 rotation_481）
+    # 3D 悬停物理（Uiverse.io by ommanav_2060）：光标追踪倾斜 + 阴影偏移
+    TILT_DEG = 12.0
+    TILT_MS = 400
+    TILT_RETURN_MS = 600
+    SHADOW_SPREAD = 8            # 阴影最大扩散半径（计入绘制余量）
+    GLOW_MS_PER_ROUND = 5000     # 未连接亮线旋转一圈 5s
+    BD_REFRESH_MS = 200          # 磨砂背景采样节流
 
     def __init__(self, slot: int, parent: QWidget | None = None):
         super().__init__(parent)
         self._slot = slot
         self._row: dict | None = None
         self._progress = 0.0
+        self._hovered = False          # 悬停预览
+        self._pinned = False           # 点击保持背面（再次点击回落）
         self._anim = QVariantAnimation(self)
         self._anim.setDuration(self.DURATION)
         self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
@@ -779,16 +782,34 @@ class FlipCard(QWidget):
         self._tilt_anim = QVariantAnimation(self)
         self._tilt_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._tilt_anim.valueChanged.connect(self._on_tilt)
+        # 磨砂背景缓存（节流采样星空并缩小-放大实现模糊）
+        self._bd_img: QImage | None = None
+        self._bd_at = 0.0
+        self._bd_size = QSize()
         self.setMinimumSize(120, 96)
         self.setMouseTracking(True)     # 不按键也接收 move，用于连续倾斜
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
+    # ---------- 翻转面统一决策 ----------
+
+    def _target_progress(self) -> float:
+        if self._row is not None:
+            return 1.0              # 已连接：背面绿玻璃（设备详情）
+        if self._hovered or self._pinned:
+            return 1.0              # 空闲：悬停/点击预览背面
+        return 0.0
+
+    def _sync_face(self) -> None:
+        self._animate_to(self._target_progress())
+
     def set_row(self, row: dict | None) -> None:
-        """喂入该槽位最新快照；接入 / 断开状态变化时自动翻转卡片。"""
+        """喂入该槽位最新快照；接入 / 断开时平滑翻到对应面。"""
         was_active = self._row is not None
         self._row = row
+        if row is None:
+            self._pinned = False   # 设备断开：点击保持自动解除，回落正面
         if (row is not None) != was_active:
-            self._animate_to(1.0 if row is not None else 0.0)
+            self._sync_face()
         self.update()
 
     def _fit_font(self, text: str, base_pt: float, max_w: float,
@@ -813,7 +834,7 @@ class FlipCard(QWidget):
         self._progress = float(value)
         self.update()
 
-    # ---------- 3D 悬停物理（Uiverse.io by ommanav_2060，只取动效） ----------
+    # ---------- 3D 悬停物理 ----------
 
     def _on_tilt(self, value) -> None:
         self._tilt = QPointF(value)
@@ -834,13 +855,20 @@ class FlipCard(QWidget):
         self._animate_tilt(-ny * self.TILT_DEG, nx * self.TILT_DEG,
                            self.TILT_MS)
 
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        # 修复原「点击无响应」：点击切换背面预览并保持，再次点击回落
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._pinned = not self._pinned
+            self._sync_face()
+
     def enterEvent(self, event) -> None:      # noqa: N802
-        # 悬停翻到背面预览；已连接的卡本来就在背面，保持不动
-        self._animate_to(1.0)
+        self._hovered = True
+        self._sync_face()
 
     def leaveEvent(self, event) -> None:      # noqa: N802
-        # 移开：翻回设备状态对应的面 + 卡片 0.6s 回正（对应原型复位过渡）
-        self._animate_to(1.0 if self._row is not None else 0.0)
+        # 移开回落（点击保持的预览不受影响）+ 卡片 0.6s 回正
+        self._hovered = False
+        self._sync_face()
         self._animate_tilt(0.0, 0.0, self.TILT_RETURN_MS)
 
     # ---------- 绘制 ----------
@@ -869,6 +897,44 @@ class FlipCard(QWidget):
         p.drawRoundedRect(rect.adjusted(2, 2, -2, -2),
                           self.RADIUS - 2, self.RADIUS - 2)
 
+    # ---------- 液态玻璃材质 ----------
+
+    def _blurred_backdrop(self, rect: QRectF) -> QImage | None:
+        """采样卡片身后的星空区域，缩小-放大实现磨砂模糊（带节流缓存）。
+
+        采样区比卡体四周大 12px：绘制时把模糊图放大画进略小的目标区，
+        形成透过玻璃看到的轻微放大——即「折射」透镜感。
+        """
+        now = time.monotonic()
+        key = QSize(max(1, int(rect.width())), max(1, int(rect.height())))
+        if (self._bd_img is not None and self._bd_size == key
+                and (now - self._bd_at) * 1000.0 < self.BD_REFRESH_MS):
+            return self._bd_img
+        self._bd_at = now
+        self._bd_size = key
+        star = self.window().findChild(Starfield) if self.window() else None
+        if star is None or star.size().isEmpty():
+            self._bd_img = None
+            return None
+        g = 12.0
+        region = QRectF(rect.adjusted(-g, -g, g, g))
+        tl = star.mapFrom(self, region.topLeft().toPoint())
+        pix = star.grab(QRect(tl, region.size().toSize()))
+        if pix.isNull():
+            self._bd_img = None
+            return None
+        img = pix.toImage()
+        self._bd_img = img.scaled(
+            max(1, img.width() // 14), max(1, img.height() // 14),
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation)
+        return self._bd_img
+
+    def _shadow_text(self, p: QPainter, rect: QRectF, flags, text: str) -> None:
+        """玻璃卡文字的柔影（先画 1.2px 下的深色投影，再由调用方画正文）。"""
+        p.setPen(QColor(0, 0, 0, 135))
+        p.drawText(rect.translated(0.0, 1.2), flags, text)
+
     def paintEvent(self, event) -> None:      # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -890,26 +956,63 @@ class FlipCard(QWidget):
         p.setTransform(tr)
         # 翻转压缩（沿用 |cos| 方案；倾斜已含在内层变换，叠加无冲突）
         p.scale(abs(sx), 1.0)
-        # 悬浮阴影随倾斜偏移（对应原型各 tracker 不同的 box-shadow 偏移）
+        # 柔和投影随倾斜偏移（玻璃浮在星空之上）
         sh_dx = -ry * 0.75
         sh_dy = 12.0 + rx * 0.5
-        for spread, alpha in ((2, 70), (4, 45), (7, 26)):
+        for spread, alpha in ((2, 62), (4, 40), (7, 22)):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(0, 0, 0, alpha))
             sh = rect.adjusted(-spread + sh_dx, -spread + 2.0 + sh_dy,
                                spread + sh_dx, spread + 2.0 + sh_dy)
             p.drawRoundedRect(sh, self.RADIUS + spread, self.RADIUS + spread)
-        # 未连接：四周旋转线性光效（仅内缘细亮线）
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(self.BACK if sx < 0 else self.FRONT)
-        p.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
-        # 未连接：内缘亮线画在卡体之上，旋转线性光效只保留这一条细线
+        # ---- 玻璃主体：磨砂折射背景 ----
+        p.save()
+        path = QPainterPath()
+        path.addRoundedRect(rect, self.RADIUS, self.RADIUS)
+        p.setClipPath(path)
+        bd = self._blurred_backdrop(rect)
+        if bd is not None and not bd.isNull():
+            p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            # 画进略小的目标区 → 背景透过玻璃轻微放大 = 折射透镜感
+            p.drawImage(rect.adjusted(-6, -6, 6, 6), bd)
+        else:
+            p.fillRect(rect, QColor(14, 18, 26, 175))
+        # 磨砂白雾 + 底部加深沉稳（玻璃厚度感）
+        vgrad = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        vgrad.setColorAt(0.00, QColor(255, 255, 255, 34))
+        vgrad.setColorAt(0.45, QColor(255, 255, 255, 13))
+        vgrad.setColorAt(1.00, QColor(8, 12, 22, 56))
+        p.fillRect(rect, QBrush(vgrad))
+        # 已连接：绿色玻璃（未连接保持透明玻璃 + 旋转亮线）
+        if self._row is not None:
+            g = QColor(GREEN)             # GREEN 为 "#2FBF71" 字符串
+            g.setAlpha(150)
+            p.fillRect(rect, g)
+        p.restore()
+        # ---- 细腻高光边缘 ----
+        edge = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        edge.setColorAt(0.00, QColor(255, 255, 255, 92))
+        edge.setColorAt(0.50, QColor(255, 255, 255, 34))
+        edge.setColorAt(1.00, QColor(255, 255, 255, 118))   # 底缘折射亮边
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QBrush(edge), 1.4))
+        p.drawRoundedRect(rect.adjusted(0.7, 0.7, -0.7, -0.7),
+                          self.RADIUS, self.RADIUS)
+        # 顶缘镜面高光
+        spec = QLinearGradient(rect.topLeft(),
+                               QPointF(rect.left(),
+                                       rect.top() + rect.height() * 0.5))
+        spec.setColorAt(0.0, QColor(255, 255, 255, 150))
+        spec.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.setPen(QPen(QBrush(spec), 1.2))
+        p.drawRoundedRect(rect.adjusted(1.9, 1.9, -1.9, -1.9),
+                          self.RADIUS - 1, self.RADIUS - 1)
+        # 未连接：内缘旋转亮线（画在卡体之上）
         if self._row is None:
             self._paint_glow_ring(p, rect)
-        # 内缩 BORDER，对应 CSS 的 10px 同色边框（内容区居中）
+        # 内容区
         inner = rect.adjusted(self.BORDER, self.BORDER,
                               -self.BORDER, -self.BORDER)
-        p.setPen(QColor(WHITE))
         if sx < 0:
             self._paint_back(p, inner)
         else:
@@ -923,7 +1026,7 @@ class FlipCard(QWidget):
             gx = rect.center().x() - nx * rect.width() * 0.15
             gy = rect.center().y() - ny * rect.height() * 0.15
             rg = QRadialGradient(gx, gy, rect.width() * 0.75)
-            a = int(56 * inten)               # 峰值≈0.22 白（灰卡上可感知的柔光）
+            a = int(56 * inten)
             rg.setColorAt(0.0, QColor(255, 255, 255, a))
             rg.setColorAt(0.5, QColor(255, 255, 255, a // 2))
             rg.setColorAt(1.0, QColor(255, 255, 255, 0))
@@ -936,6 +1039,9 @@ class FlipCard(QWidget):
         on = self._row is not None
         # 底部：P 编号
         p.setFont(font(20, bold=True, tracking=2.0))
+        self._shadow_text(p, rect.adjusted(0, -6, 0, -2),
+                          Qt.AlignmentFlag.AlignHCenter
+                          | Qt.AlignmentFlag.AlignBottom, f"P{self._slot}")
         p.setPen(QColor(WHITE))
         p.drawText(rect.adjusted(0, -6, 0, -2),
                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
@@ -944,6 +1050,10 @@ class FlipCard(QWidget):
         text = "已连接" if on else "未连接 · 空位"
         zone = rect.adjusted(0, 0, 0, -int(rect.height() * 0.30))
         p.setFont(self._fit_font(text, self.BIG_PT, zone.width()))
+        self._shadow_text(p, zone,
+                          Qt.AlignmentFlag.AlignHCenter
+                          | Qt.AlignmentFlag.AlignVCenter, text)
+        p.setPen(QColor(WHITE))
         p.drawText(zone,
                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
                    text)
@@ -981,6 +1091,14 @@ class FlipCard(QWidget):
         m_lat, m_cjk = QFontMetricsF(f_lat), QFontMetricsF(f_cjk)
         x0 = rect.center().x() - w / 2.0
         baseline = rect.bottom() - max(m_lat.descent(), m_cjk.descent()) - 2.0
+        # 柔影（玻璃卡文字可读性）
+        p.setPen(QColor(0, 0, 0, 135))
+        p.setFont(f_lat)
+        p.drawText(QPointF(x0, baseline + 1.2), latin)
+        p.setFont(f_cjk)
+        p.drawText(QPointF(x0 + m_lat.horizontalAdvance(latin),
+                           baseline + 1.2), rest)
+        # 正文
         p.setPen(QColor(WHITE))
         p.setFont(f_lat)
         p.drawText(QPointF(x0, baseline), latin)
@@ -1000,13 +1118,17 @@ class FlipCard(QWidget):
         if r:
             # 顶部小字保持原尺寸：IP 行与「… pps · 序列 …」行（按要求不变）
             p.setFont(font(8.5, mono=True))
-            p.setPen(QColor("#EAF7EF"))
             y = rect.top() + 4
             for ln in (f"{r.get('ip', '-')}:{r.get('port', 0)}",
                        f"{r.get('pps', 0)} pps · 序列 {r.get('seq', 0)}"):
+                self._shadow_text(
+                    p, QRectF(rect.left(), y, rect.width(), 16),
+                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                    ln)
+                p.setPen(QColor("#EAF7EF"))
                 p.drawText(QRectF(rect.left(), y, rect.width(), 16),
-                           Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-                           ln)
+                           Qt.AlignmentFlag.AlignHCenter
+                           | Qt.AlignmentFlag.AlignTop, ln)
                 y += 16
             # 中部：按键名（含中文）放大适配；无按键时给一行占位说明
             btns = r.get("buttons") or []
@@ -1014,10 +1136,13 @@ class FlipCard(QWidget):
             zone = QRectF(rect.left(), y + 4, rect.width(),
                           mid_bottom - y - 8)
             p.setFont(self._fit_font(label, self.BIG_PT, zone.width()))
+            self._shadow_text(p, zone,
+                              Qt.AlignmentFlag.AlignHCenter
+                              | Qt.AlignmentFlag.AlignVCenter, label)
             p.setPen(QColor(WHITE))
             p.drawText(zone,
-                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
-                       label)
+                       Qt.AlignmentFlag.AlignHCenter
+                       | Qt.AlignmentFlag.AlignVCenter, label)
         else:
             # 中部两行大字（中文放大 5 倍，逐行按卡宽收缩）
             zone = QRectF(rect.left(), rect.top() + 4, rect.width(),
@@ -1027,9 +1152,13 @@ class FlipCard(QWidget):
                 sub = QRectF(zone.left(), zone.top() + i * half,
                              zone.width(), half)
                 p.setFont(self._fit_font(ln, self.BIG_PT, zone.width()))
+                self._shadow_text(p, sub,
+                                  Qt.AlignmentFlag.AlignHCenter
+                                  | Qt.AlignmentFlag.AlignVCenter, ln)
+                p.setPen(QColor(WHITE))
                 p.drawText(sub,
-                           Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
-                           ln)
+                           Qt.AlignmentFlag.AlignHCenter
+                           | Qt.AlignmentFlag.AlignVCenter, ln)
 
 
 class FlipCardGrid(QWidget):
