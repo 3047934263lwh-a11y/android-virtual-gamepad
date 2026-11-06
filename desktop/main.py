@@ -58,9 +58,10 @@ from PySide6.QtWidgets import (  # noqa: E402
 
 from receiver import Receiver, local_ip  # noqa: E402
 from style import (  # noqa: E402
-    HEADER_H, INK, LINE, PAPER, QSS, RED, SANS, SIDEBAR_W,
+    HEADER_H, INK, LINE, PAPER, RED, SANS, SIDEBAR_W,
     STATUSBAR_H, UNIT, WHITE, font,
 )
+import style as _style  # noqa: E402
 from widgets import (  # noqa: E402
     AnimatedAction, Block, DataTable, FlipCardGrid, KeyValue, LogView, Metric,
     Starfield, StickScope, TitleBar, WindowButton, rule, section,
@@ -985,8 +986,9 @@ def main() -> int:
     app.setOrganizationName(APP_ORG)
     app.setWindowIcon(app_icon())
     app.setStyle("Fusion")           # 统一跨平台绘制，保证 QSS 精准生效
+    _style.load_fonts()              # 注册随包字体（BBH Bogle / 正格点黑16）
     app.setFont(font(10))
-    app.setStyleSheet(QSS)
+    app.setStyleSheet(_style.QSS)
     w = MainWindow(selftest_dir)
     w.show()
     return app.exec()

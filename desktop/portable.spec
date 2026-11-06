@@ -36,6 +36,7 @@ a = Analysis(
         ('vendor', 'vendor'),
         ('vendor/vgamepad/win/vigem', 'vgamepad/win/vigem'),
         ('assets/app.ico', '.'),
+        ('assets/fonts', 'assets/fonts'),
     ],
     hiddenimports=[
         'vgamepad',
