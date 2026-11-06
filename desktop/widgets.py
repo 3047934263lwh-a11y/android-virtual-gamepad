@@ -954,8 +954,11 @@ class FlipCard(QWidget):
         tr.rotate(rx, Qt.Axis.XAxis)
         tr.translate(-rect.center().x(), -rect.center().y())
         p.setTransform(tr)
-        # 翻转压缩（沿用 |cos| 方案；倾斜已含在内层变换，叠加无冲突）
+        # 翻转压缩：以左缘为转轴（translate 到左缘再缩放），像书页一样
+        # 从最左侧翻开/合上；倾斜已含在内层变换，叠加无冲突
+        p.translate(rect.left(), 0.0)
         p.scale(abs(sx), 1.0)
+        p.translate(-rect.left(), 0.0)
         # 柔和投影随倾斜偏移（玻璃浮在星空之上）
         sh_dx = -ry * 0.75
         sh_dy = 12.0 + rx * 0.5
