@@ -14,7 +14,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QBrush, QColor, QFontMetricsF, QLinearGradient, QPainter, QPainterPath,
-    QPen, QRadialGradient,
+    QPen, QRadialGradient, QTransform,
 )
 from PySide6.QtWidgets import (
     QAbstractButton, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
@@ -755,12 +755,13 @@ class FlipCard(QWidget):
     DURATION = 999                # 对应 CSS transition: transform .999s
     # 卡内中文字号：原 8.5pt / 11pt 的 5 倍；超宽时按卡片宽度自动收缩适配
     BIG_PT = 8.5 * 5
-    # 漂浮动效（Uiverse.io by dexter-st 的 @keyframes hover，只取漂浮）：
-    # 基准周期 3s（比 1s 慢 3 倍），每张卡再随机化时长/幅度/相位，避免整排同步
-    FLOAT_AMP = 7.0
-    FLOAT_SCALE = 0.02
-    # 悬浮质感 + 线性光效（Uiverse.io by ElSombrero2，只取三样）：
-    # ① 多层柔和阴影的悬浮质感 ② 未连接时四周旋转线性光效 ③ 随机化漂浮
+    # 3D 悬停物理（Uiverse.io by ommanav_2060，只取动效）：
+    # 鼠标在卡上移动 → 卡片朝鼠标方向倾斜（±12°）+ 阴影随倾斜偏移 +
+    # 白色眩光跟随鼠标移动；移开后 0.6s 回正。倾斜角度与原型 3×3
+    # tracker 网格一致，但做连续映射（更顺滑）。
+    TILT_DEG = 12.0               # 对应原型 rotateX/rotateY 的 ±12°
+    TILT_MS = 400                 # 对应 transition: transform .4s
+    TILT_RETURN_MS = 600          # 对应非悬停复位 transition .6s
     SHADOW_SPREAD = 8             # 阴影最大扩散半径（计入绘制余量）
     GLOW_MS_PER_ROUND = 5000      # 线性光效旋转一圈 5s（对应 rotation_481）
 
@@ -769,26 +770,17 @@ class FlipCard(QWidget):
         self._slot = slot
         self._row: dict | None = None
         self._progress = 0.0
-        self._float = 0.0              # 漂浮相位 0..1（峰值=上浮+放大）
         self._anim = QVariantAnimation(self)
         self._anim.setDuration(self.DURATION)
         self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
         self._anim.valueChanged.connect(self._on_anim)
-        # 漂浮：-1→1 线性 + InOutSine，phase=1-|v| 形成无接缝的三角往复；
-        # 不依赖 QVariantAnimation 的循环换向语义，两端平滑无跳变。
-        # 每张卡随机化时长（基准 3s ±0.5s）/幅度/相位，互不同步
-        self._float_amp = random.uniform(5.0, 9.0)
-        dur = random.randint(2500, 3500)
-        self._float_anim = QVariantAnimation(self)
-        self._float_anim.setDuration(dur)
-        self._float_anim.setStartValue(-1.0)
-        self._float_anim.setEndValue(1.0)
-        self._float_anim.setEasingCurve(QEasingCurve.Type.InOutSine)
-        self._float_anim.setLoopCount(-1)          # 无限循环
-        self._float_anim.valueChanged.connect(self._on_float)
-        self._float_anim.start()
-        self._float_anim.setCurrentTime(random.randint(0, dur))   # 随机相位
+        # 3D 倾斜：当前角度 (rotX, rotY)，QPointF 插值平滑逼近目标
+        self._tilt = QPointF(0.0, 0.0)
+        self._tilt_anim = QVariantAnimation(self)
+        self._tilt_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._tilt_anim.valueChanged.connect(self._on_tilt)
         self.setMinimumSize(120, 96)
+        self.setMouseTracking(True)     # 不按键也接收 move，用于连续倾斜
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def set_row(self, row: dict | None) -> None:
@@ -821,20 +813,35 @@ class FlipCard(QWidget):
         self._progress = float(value)
         self.update()
 
-    # ---------- 漂浮动效（Uiverse.io by dexter-st，只取漂浮） ----------
+    # ---------- 3D 悬停物理（Uiverse.io by ommanav_2060，只取动效） ----------
 
-    def _on_float(self, value) -> None:
-        # v ∈ [-1, 1]：phase = 1-|v| 在中点达到峰值 1，两端归零，无接缝往复
-        self._float = 1.0 - abs(float(value))
+    def _on_tilt(self, value) -> None:
+        self._tilt = QPointF(value)
         self.update()
+
+    def _animate_tilt(self, rx: float, ry: float, ms: int) -> None:
+        """从当前角度平滑过渡到目标角度（对应 CSS transition transform）。"""
+        self._tilt_anim.stop()
+        self._tilt_anim.setDuration(ms)
+        self._tilt_anim.setStartValue(self._tilt)
+        self._tilt_anim.setEndValue(QPointF(rx, ry))
+        self._tilt_anim.start()
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        # 连续映射：光标位置 → 倾斜角。左上=rotX+12/rotY-12，与原型 tr-1 一致
+        nx = (event.position().x() / max(1.0, self.width())) * 2.0 - 1.0
+        ny = (event.position().y() / max(1.0, self.height())) * 2.0 - 1.0
+        self._animate_tilt(-ny * self.TILT_DEG, nx * self.TILT_DEG,
+                           self.TILT_MS)
 
     def enterEvent(self, event) -> None:      # noqa: N802
         # 悬停翻到背面预览；已连接的卡本来就在背面，保持不动
         self._animate_to(1.0)
 
     def leaveEvent(self, event) -> None:      # noqa: N802
-        # 移开后回到设备状态对应的面：已连接=绿背面，空闲=灰正面
+        # 移开：翻回设备状态对应的面 + 卡片 0.6s 回正（对应原型复位过渡）
         self._animate_to(1.0 if self._row is not None else 0.0)
+        self._animate_tilt(0.0, 0.0, self.TILT_RETURN_MS)
 
     # ---------- 绘制 ----------
 
@@ -870,23 +877,27 @@ class FlipCard(QWidget):
         if abs(sx) < 0.02:
             p.end()
             return
-        # 动态余量：垂直 = 上浮幅度 + 放大外扩 + 阴影扩散 + 安全边；
-        # 水平 = 放大外扩 + 阴影扩散 + 安全边。任何相位不裁切。
-        mv = (self._float_amp + self.FLOAT_SCALE * h / 2.0
-              + self.SHADOW_SPREAD + 1.0)
-        mh = self.FLOAT_SCALE * w / 2.0 + self.SHADOW_SPREAD + 1.0
-        rect = QRectF(mh, mv, w - 2.0 * mh, h - 2.0 * mv)
-        # 漂浮：上浮 幅度×phase，内容放大 1+FLOAT_SCALE×phase
-        fy = -self._float_amp * self._float
-        k = 1.0 + self.FLOAT_SCALE * self._float
-        p.translate(rect.center().x(), rect.center().y() + fy)
-        p.scale(abs(sx) * k, k)
-        p.translate(-rect.center().x(), -rect.center().y())
-        # 悬浮质感：多层柔和阴影（随卡片一起漂浮）
+        rx, ry = self._tilt.x(), self._tilt.y()
+        # 绘制余量：倾斜阴影的偏移（水平 ±9px、垂直 6..18px）+ 扩散 + 安全边
+        m = self.SHADOW_SPREAD + 9.0 + 1.0
+        rect = QRectF(m, m, w - 2.0 * m, h - 2.0 * m)
+        # 3D 倾斜（正交投影近似 CSS perspective:1200px 的小角度观感）
+        tr = QTransform()
+        tr.translate(rect.center().x(), rect.center().y())
+        tr.rotate(ry, Qt.Axis.YAxis)
+        tr.rotate(rx, Qt.Axis.XAxis)
+        tr.translate(-rect.center().x(), -rect.center().y())
+        p.setTransform(tr)
+        # 翻转压缩（沿用 |cos| 方案；倾斜已含在内层变换，叠加无冲突）
+        p.scale(abs(sx), 1.0)
+        # 悬浮阴影随倾斜偏移（对应原型各 tracker 不同的 box-shadow 偏移）
+        sh_dx = -ry * 0.75
+        sh_dy = 12.0 + rx * 0.5
         for spread, alpha in ((2, 70), (4, 45), (7, 26)):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(0, 0, 0, alpha))
-            sh = rect.adjusted(-spread, -spread + 2, spread, spread + 2)
+            sh = rect.adjusted(-spread + sh_dx, -spread + 2.0 + sh_dy,
+                               spread + sh_dx, spread + 2.0 + sh_dy)
             p.drawRoundedRect(sh, self.RADIUS + spread, self.RADIUS + spread)
         # 未连接：四周旋转线性光效（仅内缘细亮线）
         p.setPen(Qt.PenStyle.NoPen)
@@ -903,6 +914,22 @@ class FlipCard(QWidget):
             self._paint_back(p, inner)
         else:
             self._paint_front(p, inner)
+        # 动态眩光：跟随光标移动，角落最亮 / 边缘次之 / 居中熄灭
+        p.setTransform(QTransform())          # 眩光是卡面照明，不随倾斜变形
+        nx = max(-1.0, min(1.0, ry / self.TILT_DEG))     # 复用倾斜角反推光标位
+        ny = max(-1.0, min(1.0, -rx / self.TILT_DEG))
+        inten = 0.6 * max(abs(nx), abs(ny)) + 0.4 * abs(nx) * abs(ny)
+        if inten > 0.01:
+            gx = rect.center().x() - nx * rect.width() * 0.15
+            gy = rect.center().y() - ny * rect.height() * 0.15
+            rg = QRadialGradient(gx, gy, rect.width() * 0.75)
+            a = int(56 * inten)               # 峰值≈0.22 白（灰卡上可感知的柔光）
+            rg.setColorAt(0.0, QColor(255, 255, 255, a))
+            rg.setColorAt(0.5, QColor(255, 255, 255, a // 2))
+            rg.setColorAt(1.0, QColor(255, 255, 255, 0))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(rg))
+            p.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
         p.end()
 
     def _paint_front(self, p: QPainter, rect: QRectF) -> None:
