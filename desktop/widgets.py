@@ -755,10 +755,10 @@ class FlipCard(QWidget):
     # 卡内中文字号：原 8.5pt / 11pt 的 5 倍；超宽时按卡片宽度自动收缩适配
     BIG_PT = 8.5 * 5
     # 漂浮动效（Uiverse.io by dexter-st 的 @keyframes hover，只取漂浮）：
-    # 3s 循环，峰值为上浮 7px + 放大 1.02，ease 往复
+    # 周期 1s（原 3s 的 3 倍帧率），峰值上浮 7px + 放大 1.02
     FLOAT_AMP = 7.0
     FLOAT_SCALE = 0.02
-    FLOAT_SEC = 3000
+    FLOAT_SEC = 1000
 
     def __init__(self, slot: int, parent: QWidget | None = None):
         super().__init__(parent)
@@ -838,11 +838,13 @@ class FlipCard(QWidget):
         if abs(sx) < 0.02:
             p.end()
             return
-        # 绘制区上下各预留 FLOAT_AMP，漂浮时卡片在余量内升降，永不裁切
-        m = self.FLOAT_AMP
-        rect = QRectF(0.0, m, w, h - 2.0 * m)
-        # 漂浮：上浮 m×phase（回到上余量顶），内容放大 1+FLOAT_SCALE×phase
-        fy = -m * self._float
+        # 动态余量：垂直 = 上浮幅度 + 放大外扩 + 安全边；水平 = 放大外扩 + 安全边。
+        # 保证任何相位下 (上浮+放大) 的合成边界都落在控件内，绝不裁切。
+        mv = self.FLOAT_AMP + self.FLOAT_SCALE * h / 2.0 + 1.0
+        mh = self.FLOAT_SCALE * w / 2.0 + 1.0
+        rect = QRectF(mh, mv, w - 2.0 * mh, h - 2.0 * mv)
+        # 漂浮：上浮 FLOAT_AMP×phase，内容放大 1+FLOAT_SCALE×phase
+        fy = -self.FLOAT_AMP * self._float
         k = 1.0 + self.FLOAT_SCALE * self._float
         p.translate(rect.center().x(), rect.center().y() + fy)
         p.scale(abs(sx) * k, k)
