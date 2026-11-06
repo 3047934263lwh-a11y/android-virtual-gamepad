@@ -13,7 +13,7 @@ from PySide6.QtCore import (
     QVariantAnimation, Signal,
 )
 from PySide6.QtGui import (
-    QColor, QPainter, QPainterPath, QPen, QRadialGradient,
+    QColor, QFontMetricsF, QPainter, QPainterPath, QPen, QRadialGradient,
 )
 from PySide6.QtWidgets import (
     QAbstractButton, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
@@ -742,7 +742,9 @@ class FlipCard(QWidget):
     progress 越过 0.5 后切换绘制背面——两面均为对称压缩、内容正向
     （等价于 CSS 里背面预旋转 180° 后的呈现），视觉与 rotateY 翻页一致。
 
-    本组件只做视觉呈现：`set_row()` 由外部喂数据，不承载任何连接逻辑。
+    本组件只做视觉呈现：`set_row()` 由外部喂数据，不承载任何连接逻辑；
+    设备接入 / 断开时自动翻转到对应面（绿=已连接，灰=空闲），
+    悬停仍可临时预览背面，移开后回到设备状态对应的面。
     """
 
     FRONT = QColor("#5B6270")     # 正面：灰（未连接/空闲）
@@ -750,6 +752,8 @@ class FlipCard(QWidget):
     BORDER = 10                   # 对应 CSS border: 10px solid <同色>
     RADIUS = 10                   # 对应 CSS border-radius: 10px
     DURATION = 999                # 对应 CSS transition: transform .999s
+    # 卡内中文字号：原 8.5pt / 11pt 的 5 倍；超宽时按卡片宽度自动收缩适配
+    BIG_PT = 8.5 * 5
 
     def __init__(self, slot: int, parent: QWidget | None = None):
         super().__init__(parent)
@@ -764,26 +768,42 @@ class FlipCard(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def set_row(self, row: dict | None) -> None:
+        """喂入该槽位最新快照；接入 / 断开状态变化时自动翻转卡片。"""
+        was_active = self._row is not None
         self._row = row
+        if (row is not None) != was_active:
+            self._animate_to(1.0 if row is not None else 0.0)
         self.update()
 
+    def _fit_font(self, text: str, base_pt: float, max_w: float,
+                  bold: bool = True) -> QFont:
+        """以 base_pt（放大后的字号）为起点，超出 max_w 时按宽度等比收缩。"""
+        f = font(base_pt, bold=bold)
+        fm = QFontMetricsF(f)
+        adv = fm.horizontalAdvance(text)
+        if adv > max_w > 0:
+            f.setPointSizeF(max(6.0, base_pt * max_w / adv))
+        return f
+
     # ---------- 翻转动画 ----------
+
+    def _animate_to(self, target: float) -> None:
+        self._anim.stop()
+        self._anim.setStartValue(self._progress)
+        self._anim.setEndValue(target)
+        self._anim.start()
 
     def _on_anim(self, value) -> None:
         self._progress = float(value)
         self.update()
 
     def enterEvent(self, event) -> None:      # noqa: N802
-        self._anim.stop()
-        self._anim.setStartValue(self._progress)
-        self._anim.setEndValue(1.0)
-        self._anim.start()
+        # 悬停翻到背面预览；已连接的卡本来就在背面，保持不动
+        self._animate_to(1.0)
 
     def leaveEvent(self, event) -> None:      # noqa: N802
-        self._anim.stop()
-        self._anim.setStartValue(self._progress)
-        self._anim.setEndValue(0.0)
-        self._anim.start()
+        # 移开后回到设备状态对应的面：已连接=绿背面，空闲=灰正面
+        self._animate_to(1.0 if self._row is not None else 0.0)
 
     # ---------- 绘制 ----------
 
@@ -814,39 +834,66 @@ class FlipCard(QWidget):
 
     def _paint_front(self, p: QPainter, rect: QRectF) -> None:
         on = self._row is not None
+        # 底部：P 编号
         p.setFont(font(20, bold=True, tracking=2.0))
-        p.drawText(rect.adjusted(0, -10, 0, -18),
+        p.setPen(QColor(WHITE))
+        p.drawText(rect.adjusted(0, -6, 0, -2),
                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
                    f"P{self._slot}")
-        p.setFont(font(8.5, bold=True, tracking=1.0))
-        p.setPen(QColor(WHITE if on else "#D8DEE8"))
-        p.drawText(rect.adjusted(0, 14, 0, 0),
-                   Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-                   "已连接" if on else "未连接 · 空位")
+        # 中部：状态大字（中文放大 5 倍，超宽自动收缩适配卡宽）
+        text = "已连接" if on else "未连接 · 空位"
+        zone = rect.adjusted(0, 0, 0, -int(rect.height() * 0.30))
+        p.setFont(self._fit_font(text, self.BIG_PT, zone.width()))
+        p.drawText(zone,
+                   Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+                   text)
 
     def _paint_back(self, p: QPainter, rect: QRectF) -> None:
         r = self._row
-        p.setFont(font(11, bold=True, tracking=1.2))
-        p.drawText(rect.adjusted(0, -16, 0, -30),
+        # 底部：状态标题大字（中文部分放大 5 倍，整行按卡宽收缩适配）
+        title = f"P{self._slot} · 已连接" if r else f"P{self._slot} · 空位"
+        tf = self._fit_font(title, self.BIG_PT, rect.width())
+        p.setFont(tf)
+        p.setPen(QColor(WHITE))
+        p.drawText(rect,
                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
-                   f"P{self._slot} · 已连接" if r else f"P{self._slot} · 空位")
-        p.setFont(font(8.5, mono=True))
-        p.setPen(QColor("#EAF7EF"))
-        lines = []
+                   title)
+        title_h = QFontMetricsF(tf).height()
+        mid_bottom = rect.bottom() - title_h - 6
+
         if r:
-            lines.append(f"{r.get('ip', '-')}:{r.get('port', 0)}")
-            lines.append(f"{r.get('pps', 0)} pps · 序列 {r.get('seq', 0)}")
+            # 顶部小字保持原尺寸：IP 行与「… pps · 序列 …」行（按要求不变）
+            p.setFont(font(8.5, mono=True))
+            p.setPen(QColor("#EAF7EF"))
+            y = rect.top() + 4
+            for ln in (f"{r.get('ip', '-')}:{r.get('port', 0)}",
+                       f"{r.get('pps', 0)} pps · 序列 {r.get('seq', 0)}"):
+                p.drawText(QRectF(rect.left(), y, rect.width(), 16),
+                           Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                           ln)
+                y += 16
+            # 中部：按键名（含中文）放大适配；无按键时给一行占位说明
             btns = r.get("buttons") or []
-            lines.append(" · ".join(btns[:4]) if btns else "无按键")
+            label = " · ".join(btns[:4]) if btns else "无按键"
+            zone = QRectF(rect.left(), y + 4, rect.width(),
+                          mid_bottom - y - 8)
+            p.setFont(self._fit_font(label, self.BIG_PT, zone.width()))
+            p.setPen(QColor(WHITE))
+            p.drawText(zone,
+                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+                       label)
         else:
-            lines.append("等待设备接入")
-            lines.append("该槽位当前空闲")
-        y = rect.top() + 6
-        for ln in lines:
-            p.drawText(QRectF(rect.left(), y, rect.width(), 16),
-                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-                       ln)
-            y += 16
+            # 中部两行大字（中文放大 5 倍，逐行按卡宽收缩）
+            zone = QRectF(rect.left(), rect.top() + 4, rect.width(),
+                          mid_bottom - rect.top() - 8)
+            half = zone.height() / 2.0
+            for i, ln in enumerate(("等待设备接入", "该槽位当前空闲")):
+                sub = QRectF(zone.left(), zone.top() + i * half,
+                             zone.width(), half)
+                p.setFont(self._fit_font(ln, self.BIG_PT, zone.width()))
+                p.drawText(sub,
+                           Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+                           ln)
 
 
 class FlipCardGrid(QWidget):
