@@ -90,6 +90,12 @@ class UdpSender(private val state: GamepadState) {
     @Volatile
     private var rumbleThread: Thread? = null
 
+    /** 最近一次会话的目标地址（start 时记录），供告别包使用 */
+    @Volatile
+    private var lastHost: String? = null
+    @Volatile
+    private var lastPort: Int = 0
+
     /** 只提示一次「回传端口被占用」，避免 watchdog 反复重连时刷屏 */
     @Volatile
     private var portWarned = false
@@ -117,6 +123,8 @@ class UdpSender(private val state: GamepadState) {
         }
 
         this.listener = listener
+        lastHost = trimmed
+        lastPort = port
         running = true
         val gen = generation.incrementAndGet()
         worker = Thread({ runLoop(gen, trimmed, port) }, "vgp-udp-sender").apply {
@@ -147,6 +155,37 @@ class UdpSender(private val state: GamepadState) {
         }
         // 主动 stop 后不再投递任何回调（调用方自行刷新 UI），避免访问已销毁的 Activity
         listener = null
+    }
+
+    /**
+     * 向 PC 发送告别包（VGPQ，与 PC 端 Stop 通知同格式，旧版 PC 忽略未知
+     * 报文，向后兼容）：接收端收到后立即释放该槽位，卡片翻灰不再等 TTL。
+     * UDP 尽力送达，连发两次提高到达率；独立临时套接字，独立线程发送
+     * （避免主线程网络调用），失败静默——超时兜底仍会释放。
+     * 必须在 [stop] 之后调用（此时已无游戏报文，避免同轮排空互相覆盖）。
+     */
+    fun sendGoodbye() {
+        val host = lastHost ?: return
+        val port = lastPort
+        if (port !in 1..65535) return
+        Thread({
+            runCatching {
+                val addr = InetAddress.getByName(host)
+                val data = byteArrayOf(
+                    'V'.code.toByte(), 'G'.code.toByte(),
+                    'P'.code.toByte(), 'Q'.code.toByte(),
+                    1, 0, 0, 0,
+                )
+                DatagramSocket().use { s ->
+                    repeat(2) {
+                        runCatching { s.send(DatagramPacket(data, data.size, addr, port)) }
+                    }
+                }
+            }
+        }, "vgp-goodbye").apply {
+            isDaemon = true
+            start()
+        }
     }
 
     /**

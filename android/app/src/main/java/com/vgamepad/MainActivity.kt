@@ -1588,6 +1588,7 @@ class MainActivity : AppCompatActivity() {
         uiHandler.removeCallbacks(reconnectTask)
         try { wifiLock?.release() } catch (e: Exception) { }
         sender.stop()
+        sender.sendGoodbye()   // 告别包：PC 收到立即释放槽位，不等超时
         gamepadView.releaseAll()
         playerNo = 0
         lastPps = 0

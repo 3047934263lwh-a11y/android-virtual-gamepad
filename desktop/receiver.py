@@ -25,8 +25,9 @@ VERSION = 1
 PACKET_SIZE = 20
 IDLE_RESET_SEC = 1.2
 MAX_PLAYERS = 4
-SLOT_TTL_SEC = 5.0    # 手机主动断开后不再发包，5 秒即释放槽位并刷新 UI；
-                      # 原 300s 会导致「手机已断开，PC 仍显示已连接」
+SLOT_TTL_SEC = 2.0    # 手机断开后不再发包，2 秒即释放槽位并刷新 UI；
+                      # 新版手机端断开时会发 VGPQ 告别包，PC 收到立即释放，
+                      # 此超时仅兜底旧版 APK / 崩溃 / 断电等无告别的场景
 SELECT_TIMEOUT = 0.004          # 4ms：250Hz 报文下既不过度空转，也不引入排队延迟
 SNAPSHOT_SEC = 0.10            # UI 快照 10Hz，避免 250Hz 刷新把界面打爆
 REPORT_SEC = 0.25              # 回传链路实测速率的结算周期：连上 250ms 内即可显示真实速率
@@ -372,6 +373,21 @@ class Receiver(QObject):
                         time.sleep(0.002)
 
                 for src, (data, addr) in latest.items():
+                    # 手机端告别包（与 PC 端 Stop 通知同格式）：立即释放该来源
+                    # 的槽位，不等 TTL。旧版手机端不发此包，走 TTL 兜底。
+                    if data.startswith(b"VGPQ"):
+                        p = players.get(src)
+                        if p is not None:
+                            self._unplug(p.pad)
+                            self._rumble_addrs.pop(p.idx, None)
+                            players.pop(src, None)
+                            free_slots.append(p.idx)
+                            free_slots.sort()
+                            rate_window[p.idx] = 0
+                            loss_window[p.idx] = 0
+                            self.log.emit("info",
+                                          f"{p.idx + 1}P 已断开（客户端告别），槽位已释放")
+                        continue
                     parsed = parse(data)
                     if parsed is None:
                         bad_packets += 1
@@ -465,7 +481,7 @@ class Receiver(QObject):
                     free_slots.sort()
                     rate_window[p.idx] = 0
                     loss_window[p.idx] = 0
-                    self.log.emit("info", f"{p.idx + 1}P 离线超过 5 秒，槽位已释放")
+                    self.log.emit("info", f"{p.idx + 1}P 离线超过 2 秒，槽位已释放")
 
                 # 链路实收速率：先结算本周期再回传，避免「发的是上一秒的值」
                 # 造成首秒 0、第二秒才跳到 220+ 的先低后高观感。
