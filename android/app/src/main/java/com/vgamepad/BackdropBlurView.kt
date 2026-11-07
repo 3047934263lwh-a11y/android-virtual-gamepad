@@ -42,6 +42,16 @@ class BackdropBlurView(
     private val src = Rect()
     private val dst = RectF()
 
+    /** 滚动时更新取样区间（占底图高度的比例），让磨砂条与滚动内容保持对齐 */
+    fun setSrcRange(topFrac: Float, bottomFrac: Float) {
+        srcTop = topFrac.coerceIn(0f, 1f)
+        srcBottom = bottomFrac.coerceIn(0f, 1f)
+        invalidate()
+    }
+
+    private var srcTop: Float = srcTopFrac
+    private var srcBottom: Float = srcBottomFrac
+
     init {
         // DST_IN 离屏合成走软件层最稳
         setLayerType(LAYER_TYPE_SOFTWARE, null)
@@ -60,9 +70,9 @@ class BackdropBlurView(
         val h = bmp.height
         src.set(
             0,
-            (srcTopFrac * h).toInt().coerceIn(0, h),
+            (srcTop * h).toInt().coerceIn(0, h),
             bmp.width,
-            (srcBottomFrac * h).toInt().coerceIn(0, h)
+            (srcBottom * h).toInt().coerceIn(0, h)
         )
         if (src.height() == 0) return
         dst.set(0f, 0f, width.toFloat(), height.toFloat())
