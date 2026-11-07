@@ -3,6 +3,16 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+// 正式签名：本地读 android/keystore.properties，CI 读环境变量（由 Actions Secret 注入）
+def keystoreProps = new Properties()
+def ksPropsFile = rootProject.file("keystore.properties")
+if (ksPropsFile.exists()) {
+    keystoreProps.load(new FileInputStream(ksPropsFile))
+}
+def envOr = { String envKey, String propKey ->
+    System.getenv(envKey) ?: keystoreProps.getProperty(propKey)
+}
+
 android {
     namespace 'com.vgamepad'
     compileSdk 35
@@ -15,13 +25,23 @@ android {
         versionName "1.1.1"
     }
 
+    signingConfigs {
+        release {
+            storeFile file(envOr("KEYSTORE_FILE", "storeFile"))
+            storePassword envOr("KEYSTORE_PASSWORD", "storePassword")
+            keyAlias envOr("KEY_ALIAS", "keyAlias")
+            keyPassword envOr("KEY_PASSWORD", "keyPassword")
+        }
+    }
+
     buildTypes {
         release {
-            // 2026-11-04 复审（M-19）起启用压缩与混淆；
+            // 2026-11-07 起改用正式签名（vgamepad-release.keystore）发布；
             // keep 规则只保留 XML inflate 所需的自定义 View 构造函数
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
         }
     }
 
