@@ -55,14 +55,15 @@ jobs:
           cd android
           gradle assembleDebug --no-daemon --console=plain
 
-      - name: 计算 SHA-256 并准备发布文件
+      - name: 计算 SHA-256、改名并准备发布文件
         run: |
           OUT=android/app/build/outputs/apk/debug
           APK=$(ls "$OUT"/*.apk | head -1)
-          BASE=$(basename "$APK")
-          sha256sum "$APK" | awk '{print $1}' > "$OUT/$BASE.sha256"
-          echo "APK: $BASE"
-          echo "SHA-256: $(cat "$OUT/$BASE.sha256")"
+          NAME="VirtualGamepad-${GITHUB_REF_NAME}.apk"
+          mv "$APK" "$OUT/$NAME"
+          sha256sum "$OUT/$NAME" | awk '{print $1}' > "$OUT/$NAME.sha256"
+          echo "APK: $NAME"
+          echo "SHA-256: $(cat "$OUT/$NAME.sha256")"
 
       - name: 发布 GitHub Release
         uses: softprops/action-gh-release@v2
@@ -77,5 +78,5 @@ jobs:
 
             安装包与 `.sha256` 校验文件见下方附件，手机端应用内更新会自动校验。
           files: |
-            android/app/build/outputs/apk/debug/*.apk
-            android/app/build/outputs/apk/debug/*.sha256
+            android/app/build/outputs/apk/debug/VirtualGamepad-*.apk
+            android/app/build/outputs/apk/debug/VirtualGamepad-*.sha256
