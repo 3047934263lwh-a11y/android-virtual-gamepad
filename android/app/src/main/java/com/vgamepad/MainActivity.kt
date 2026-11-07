@@ -359,27 +359,23 @@ class MainActivity : AppCompatActivity() {
 
             override fun onStartTrackingTouch(sb: SeekBar) = Unit
             override fun onStopTrackingTouch(sb: SeekBar) {
-                prefs.edit().putString("layout_v1", gamepadView.layoutJson())
-                    .putString("zorder_v1", gamepadView.zorderJson()).apply()
+                persistLayoutAll()
             }
         })
         resetOne.setOnClickListener {
             gamepadView.selectedKey?.let {
                 gamepadView.resetControl(it)
-                prefs.edit().putString("layout_v1", gamepadView.layoutJson())
-                    .putString("zorder_v1", gamepadView.zorderJson()).apply()
             }
+            persistLayoutAll()
             updateEditBar()
         }
         resetAll.setOnClickListener {
             gamepadView.resetLayout()
-            prefs.edit().putString("layout_v1", gamepadView.layoutJson())
-                    .putString("zorder_v1", gamepadView.zorderJson()).apply()
+            persistLayoutAll()
             updateEditBar()
         }
         done.setOnClickListener {
-            prefs.edit().putString("layout_v1", gamepadView.layoutJson())
-                    .putString("zorder_v1", gamepadView.zorderJson()).apply()
+            persistLayoutAll()
             gamepadView.editMode = false
             editBar.visibility = android.view.View.GONE
         }
@@ -650,6 +646,10 @@ class MainActivity : AppCompatActivity() {
         }
         container.addView(swatchRow)
         container.addView(accentLabel)
+
+        // ---- 自定义布局槽位：3 套独立布局，点选即切换，长按管理（覆盖 / 重命名 / 清空） ----
+        val layoutSlotRow = buildLayoutSlotRow()
+        container.addView(layoutSlotRow)
 
         // 布局编辑入口放在最上方，展开即可见，避免被滑杆挤出屏幕
         container.addView(
@@ -1191,6 +1191,8 @@ class MainActivity : AppCompatActivity() {
                     }
                     v is GlassButton && v.text?.toString()?.startsWith("自定义按键布局") == true ->
                         buckets[SEC_LAYOUT].add(v)
+                    v is LinearLayout && v.tag == "layout_slots" ->
+                        buckets[SEC_LAYOUT].add(v)
                     v is GlassButton -> buckets[SEC_RESET].add(v)
                     v === hideTitleRow || v === hideWrapper -> buckets[SEC_LAYOUT].add(v)
                     else -> buckets[cur].add(v)
@@ -1247,8 +1249,8 @@ class MainActivity : AppCompatActivity() {
             }
 
             val sections = listOf(
-                "外观" to buckets[SEC_LOOK],
                 "布局与大小" to buckets[SEC_LAYOUT],
+                "外观" to buckets[SEC_LOOK],
                 "摇杆与视角" to buckets[SEC_STICK],
                 "震动与触感" to buckets[SEC_HAPTIC],
             )
@@ -1279,6 +1281,185 @@ class MainActivity : AppCompatActivity() {
         showSettingsPanel(scroll)
     }
 
+    // ---------- 自定义布局槽位（3 套独立布局） ----------
+
+    /** 三个槽位的芯片文本引用，buildLayoutSlotRow() 每次打开设置时重建 */
+    private val layoutSlotLabels = mutableListOf<TextView>()
+
+    private fun slotName(i: Int): String =
+        prefs.getString("layout_slot_name_$i", null) ?: "布局 $i"
+
+    private fun activeSlot(): Int = prefs.getInt("layout_active_slot", 0)
+
+    /** 当前手柄布局（位置/大小/透明度 + 层叠顺序 + 隐藏项）打包成一份槽位 JSON */
+    private fun snapshotCurrentLayout(): String =
+        org.json.JSONObject()
+            .put("layout", gamepadView.layoutJson())
+            .put("zorder", gamepadView.zorderJson())
+            .put("hidden", gamepadView.hiddenJson())
+            .toString()
+
+    /** 布局落盘的唯一出口：基础键 + 当前激活槽位快照一起写，永不脱节 */
+    private fun persistLayoutAll() {
+        prefs.edit()
+            .putString("layout_v1", gamepadView.layoutJson())
+            .putString("zorder_v1", gamepadView.zorderJson())
+            .putString("hidden_keys", gamepadView.hiddenJson())
+            .apply()
+        val act = activeSlot()
+        if (act in 1..3) {
+            prefs.edit().putString("layout_slot_$act", snapshotCurrentLayout()).apply()
+        }
+    }
+
+    private fun applySlotData(data: String) {
+        try {
+            val o = org.json.JSONObject(data)
+            gamepadView.loadZorder(o.optString("zorder", ""))
+            gamepadView.loadLayout(o.optString("layout", ""))
+            gamepadView.loadHidden(o.optString("hidden", ""))
+        } catch (e: Exception) {
+            // 坏数据按「布局不变」处理，避免加载半套配置
+        }
+    }
+
+    private fun refreshLayoutSlotRow() {
+        val act = activeSlot()
+        for (i in 1..3) {
+            val tv = layoutSlotLabels.getOrNull(i - 1) ?: continue
+            val has = prefs.getString("layout_slot_$i", null) != null
+            tv.text = when {
+                act == i -> "${slotName(i)} · 使用中"
+                has -> slotName(i)
+                else -> "${slotName(i)}（空）"
+            }
+        }
+    }
+
+    private fun buildLayoutSlotRow(): LinearLayout {
+        val ctx = this
+        val d = resources.displayMetrics.density
+        layoutSlotLabels.clear()
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            tag = "layout_slots"
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = (6 * d).toInt() }
+        }
+        for (i in 1..3) {
+            val tv = TextView(ctx).apply {
+                textSize = 12f
+                gravity = android.view.Gravity.CENTER
+                setPadding((6 * d).toInt(), (10 * d).toInt(), (6 * d).toInt(), (10 * d).toInt())
+            }
+            val chip = com.google.android.material.card.MaterialCardView(ctx).apply {
+                radius = 14f * d
+                cardElevation = 0f
+                strokeWidth = (1 * d).toInt().coerceAtLeast(1)
+                isClickable = true
+                isFocusable = true
+                layoutParams = LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                ).apply {
+                    marginStart = (4 * d).toInt()
+                    marginEnd = (4 * d).toInt()
+                }
+                addView(tv)
+                setOnClickListener {
+                    val act = activeSlot()
+                    if (act == i) return@setOnClickListener
+                    // 离开的槽位自动保存当前布局，编辑不丢
+                    if (act in 1..3) {
+                        prefs.edit().putString("layout_slot_$act", snapshotCurrentLayout()).apply()
+                    }
+                    val data = prefs.getString("layout_slot_$i", null)
+                    if (data == null) {
+                        // 空槽：把当前布局存进去并启用
+                        prefs.edit()
+                            .putString("layout_slot_$i", snapshotCurrentLayout())
+                            .putInt("layout_active_slot", i)
+                            .apply()
+                        persistLayoutAll()
+                        android.widget.Toast.makeText(
+                            ctx, "已把当前布局保存到「${slotName(i)}」",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        prefs.edit().putInt("layout_active_slot", i).apply()
+                        applySlotData(data)
+                        persistLayoutAll()
+                        android.widget.Toast.makeText(
+                            ctx, "已切换到「${slotName(i)}」",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    refreshLayoutSlotRow()
+                }
+                setOnLongClickListener {
+                    val items = arrayOf("用当前布局覆盖此槽", "重命名", "清空此槽")
+                    androidx.appcompat.app.AlertDialog.Builder(ctx)
+                        .setTitle(slotName(i))
+                        .setItems(items) { _, w ->
+                            when (w) {
+                                0 -> {
+                                    prefs.edit()
+                                        .putString("layout_slot_$i", snapshotCurrentLayout())
+                                        .putInt("layout_active_slot", i)
+                                        .apply()
+                                    persistLayoutAll()
+                                    android.widget.Toast.makeText(
+                                        ctx, "已覆盖「${slotName(i)}」",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                                1 -> renameLayoutSlot(i)
+                                2 -> {
+                                    prefs.edit().putString("layout_slot_$i", null).apply()
+                                    if (activeSlot() == i) {
+                                        prefs.edit().putInt("layout_active_slot", 0).apply()
+                                    }
+                                    android.widget.Toast.makeText(
+                                        ctx, "已清空「${slotName(i)}」",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                            refreshLayoutSlotRow()
+                        }
+                        .show()
+                    true
+                }
+            }
+            layoutSlotLabels.add(tv)
+            row.addView(chip)
+        }
+        refreshLayoutSlotRow()
+        return row
+    }
+
+    private fun renameLayoutSlot(i: Int) {
+        val d = resources.displayMetrics.density
+        val input = android.widget.EditText(this).apply {
+            setText(slotName(i))
+            setSelection(text.length)
+            setPadding((16 * d).toInt(), (12 * d).toInt(), (16 * d).toInt(), (12 * d).toInt())
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("重命名布局")
+            .setView(input)
+            .setPositiveButton("保存") { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isNotEmpty()) {
+                    prefs.edit().putString("layout_slot_name_$i", name).apply()
+                    refreshLayoutSlotRow()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
     // ---------- 设置面板（自绘覆盖层，不依赖 BottomSheet） ----------
 
     private var settingsOverlay: android.view.View? = null
@@ -1298,6 +1479,35 @@ class MainActivity : AppCompatActivity() {
             isClickable = true            // 吞掉面板外的点击
             setOnClickListener { hideSettings() }
         }
+        // ---- 上下框毛玻璃：面板弹出前截取整屏内容，模糊后按「边缘 100% -> 向中间渐隐到 0」绘制 ----
+        try {
+            val rootVG = findViewById<android.view.ViewGroup>(R.id.root)
+            if (rootVG.width > 0 && rootVG.height > 0) {
+                val snap = android.graphics.Bitmap.createBitmap(
+                    rootVG.width, rootVG.height, android.graphics.Bitmap.Config.ARGB_8888
+                )
+                rootVG.draw(android.graphics.Canvas(snap))
+                // 降采样近似模糊：1/14 缩小再放大回半尺寸（内存减半，视觉足够糊）
+                val sw = (rootVG.width / 14).coerceAtLeast(1)
+                val sh = (rootVG.height / 14).coerceAtLeast(1)
+                val small = android.graphics.Bitmap.createScaledBitmap(snap, sw, sh, true)
+                val blurred = android.graphics.Bitmap.createScaledBitmap(
+                    small, rootVG.width / 2, rootVG.height / 2, true
+                )
+                if (small !== snap) small.recycle()
+                snap.recycle()
+                overlay.addView(
+                    BackdropBlurView(ctx, blurred),
+                    0,
+                    android.view.ViewGroup.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            // 截图失败（内存不足等）只损失装饰效果，设置面板照常弹出
+        }
         val card = android.widget.FrameLayout(ctx).apply {
             background = ContextCompat.getDrawable(ctx, R.drawable.bg_panel)
             clipToOutline = false
@@ -1308,8 +1518,8 @@ class MainActivity : AppCompatActivity() {
                 (dm.heightPixels * 0.86f).toInt()
             ).apply {
                 gravity = android.view.Gravity.BOTTOM
-                leftMargin = (34 * dm.density).toInt()
-                rightMargin = (34 * dm.density).toInt()
+                leftMargin = (68 * dm.density).toInt()
+                rightMargin = (68 * dm.density).toInt()
                 bottomMargin = (10 * dm.density).toInt()
             }
         }
