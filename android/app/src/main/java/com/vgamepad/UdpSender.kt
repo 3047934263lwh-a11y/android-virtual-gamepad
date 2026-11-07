@@ -11,6 +11,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.LockSupport
+import kotlin.math.hypot
 
 /**
  * 以固定频率把 GamepadState 序列化为 20 字节定长报文，通过 UDP 单播发往 PC。
@@ -355,10 +356,19 @@ class UdpSender(private val state: GamepadState) {
             buffer.put((state.buttons and 0xFF).toByte())
             buffer.put((state.buttons ushr 8 and 0xFF).toByte())
             buffer.put((sequence.get() and 0xFF).toByte())
-            // 右摇杆灵敏度：只缩放"触摸摇杆"这一路，陀螺仪增益由 GyroAim 单独控制，
+            // 右摇杆灵敏度：在圆形域内按「模长」缩放（方向不变，模长钳到满偏 32767）。
+            // 修复：旧实现按轴独立放大再按轴独立钳制（sx=rx*sens, sy=ry*sens），
+            // 当 sens>1 时轴向分量先饱和、斜向合模长可达 1.41 倍满偏，
+            // 表现为斜推视角比正推快 30%~41%。现在任意方向模长一致，圆形归一化得以保持。
+            // 只缩放"触摸摇杆"这一路，陀螺仪增益由 GyroAim 单独控制，
             // 因此调右摇杆灵敏度不会改变陀螺仪灵敏度，反之亦然。
-            val sx = (state.rx * state.stickSens).toInt().coerceIn(-32767, 32767)
-            val sy = (state.ry * state.stickSens).toInt().coerceIn(-32767, 32767)
+            val rxF = state.rx.toFloat()
+            val ryF = state.ry.toFloat()
+            val rMag = hypot(rxF, ryF)
+            val rK = if (rMag <= 0f) 0f
+            else minOf(rMag * state.stickSens, 32767f) / rMag
+            val sx = (rxF * rK).toInt()
+            val sy = (ryF * rK).toInt()
             // 陀螺仪模式：右摇杆 = 触摸摇杆 + 陀螺仪 叠加（摇杆大幅转、陀螺仪微调），
             // 相加后限幅 ±32767；关闭陀螺仪时右摇杆恢复独占
             val orx = if (state.useGyro)
