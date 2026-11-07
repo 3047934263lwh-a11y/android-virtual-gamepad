@@ -1494,65 +1494,36 @@ class MainActivity : AppCompatActivity() {
                 bottomMargin = (10 * dm.density).toInt()
             }
         }
-        card.clipToOutline = true     // 按 bg_panel 的 26dp 圆角裁剪，磨砂带贴合圆角
+        card.clipToOutline = true     // 按 bg_panel 的 26dp 圆角裁剪，渐隐带贴合圆角
         card.addView(content)
-        // ---- 面板内上下毛玻璃（iOS 设置页风格）：磨砂带压住面板里滚动的内容——
-        //      模糊取样自设置列表自身的快照（半分辨率 + 1/6 降采样），随滚动同步，
-        //      叠面板底色着色；贴边 100% -> 向内渐隐到 0。与游戏画面完全无关。 ----
-        card.post {
-            try {
-                val scroll = content as androidx.core.widget.NestedScrollView
-                val list = scroll.getChildAt(0) as? android.view.ViewGroup ?: return@post
-                if (list.width <= 0 || list.height <= 0) return@post
-                // 半分辨率截图（内存减半，模糊后无差别）
-                val snap = android.graphics.Bitmap.createBitmap(
-                    list.width / 2, list.height / 2, android.graphics.Bitmap.Config.ARGB_8888
+        // ---- 面板上下边缘渐隐（苹果弹层边缘效果）：面板底色 100% -> 0 的垂直渐变，
+        //      内容滚动到边缘自然淡出。确定性渲染：无快照取样、无每帧重绘，
+        //      任何滚动位置、任何机型下视觉一致，且零卡顿。 ----
+        run {
+            val d = dm.density
+            val stripH = (56 * d).toInt()
+            val pb = ContextCompat.getColor(ctx, R.color.panel_bg)
+            val pbClear = androidx.core.graphics.ColorUtils.setAlphaComponent(pb, 0)
+            fun edgeStrip(edgeTop: Boolean): android.view.View {
+                val v = android.view.View(ctx)
+                v.background = android.graphics.drawable.GradientDrawable(
+                    android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                    if (edgeTop) intArrayOf(pb, pbClear) else intArrayOf(pbClear, pb)
                 )
-                val cvs = android.graphics.Canvas(snap)
-                cvs.scale(0.5f, 0.5f)
-                list.draw(cvs)
-                val sw = (snap.width / 6).coerceAtLeast(1)
-                val sh = (snap.height / 6).coerceAtLeast(1)
-                val small = android.graphics.Bitmap.createScaledBitmap(snap, sw, sh, true)
-                val blurred = android.graphics.Bitmap.createScaledBitmap(
-                    small, snap.width, snap.height, true
-                )
-                if (small !== snap) small.recycle()
-                snap.recycle()
-
-                val d = dm.density
-                val stripH = (64 * d).toInt()
-                val visH = card.height
-                val contentH = list.height.toFloat()
-                val tint = ContextCompat.getColor(ctx, R.color.panel_bg).let {
-                    androidx.core.graphics.ColorUtils.setAlphaComponent(it, 0xB3)
-                }
-                val topStrip = BackdropBlurView(ctx, blurred, 0f, 1f, true, tint)
-                val bottomStrip = BackdropBlurView(ctx, blurred, 0f, 1f, false, tint)
-                fun updateRanges() {
-                    val y = scroll.scrollY.toFloat()
-                    topStrip.setSrcRange(y / contentH, (y + stripH) / contentH)
-                    bottomStrip.setSrcRange(
-                        (y + visH - stripH) / contentH, (y + visH) / contentH
-                    )
-                }
-                card.addView(
-                    topStrip,
-                    android.widget.FrameLayout.LayoutParams(
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT, stripH
-                    ).apply { gravity = android.view.Gravity.TOP }
-                )
-                card.addView(
-                    bottomStrip,
-                    android.widget.FrameLayout.LayoutParams(
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT, stripH
-                    ).apply { gravity = android.view.Gravity.BOTTOM }
-                )
-                scroll.setOnScrollChangeListener { _, _, _, _, _ -> updateRanges() }
-                updateRanges()
-            } catch (e: Exception) {
-                // 磨砂带失败只损失装饰效果，设置面板照常使用
+                return v
             }
+            card.addView(
+                edgeStrip(edgeTop = true),
+                android.widget.FrameLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT, stripH
+                ).apply { gravity = android.view.Gravity.TOP }
+            )
+            card.addView(
+                edgeStrip(edgeTop = false),
+                android.widget.FrameLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT, stripH
+                ).apply { gravity = android.view.Gravity.BOTTOM }
+            )
         }
         overlay.addView(card)
         root.addView(overlay)
