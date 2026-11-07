@@ -37,7 +37,7 @@ class UpdateManager(private val activity: Activity) {
     private val app_name: String by lazy { activity.getString(R.string.app_name) }
 
     /** 下载进度对话框（引用持有以便更新百分比 / 取消） */
-    private var progressDialog: AlertDialog? = null
+    private var progressDialog: androidx.appcompat.app.AlertDialog? = null
     private var progressText: TextView? = null
     private var progressBar: ProgressBar? = null
     private val downloadCancelled = AtomicBoolean(false)
@@ -130,42 +130,51 @@ class UpdateManager(private val activity: Activity) {
     private fun showUpdateDialog(release: ReleaseInfo) {
         if (activity.isFinishing || activity.isDestroyed) return
         val d = activity.resources.displayMetrics.density
-        val pad = (20 * d).toInt()
+
+        // Material 3 内容区：版本迁移行（旧 → 新，新版本用主题色强调）+ 大小行
+        val primary = com.google.android.material.color.MaterialColors.getColor(
+            activity, com.google.android.material.R.attr.colorPrimary, 0xFF6750A4.toInt())
+        val secondary = androidx.core.content.ContextCompat.getColor(activity, R.color.text_secondary)
+        val normal = androidx.core.content.ContextCompat.getColor(activity, R.color.text_primary)
 
         val body = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(pad, (10 * d).toInt(), pad, 0)
+            setPadding((24 * d).toInt(), (20 * d).toInt(), (24 * d).toInt(), 0)
         }
-        fun line(text: String, big: Boolean = false, color: Int = R.color.text_primary) {
-            body.addView(TextView(activity).apply {
-                this.text = text
-                textSize = if (big) 16f else 13.5f
-                setTextColor(androidx.core.content.ContextCompat.getColor(activity, color))
-                setPadding(0, (5 * d).toInt(), 0, (5 * d).toInt())
-            })
-        }
-        line("$app_name　当前 v${currentVersionName()}　→　最新 ${release.tagName}", big = true)
-        line("安装包大小：${"%.1f".format(release.apkSize / 1048576f)} MB",
-             color = R.color.text_secondary)
-        // 更新日志（可滚动）
-        body.addView(TextView(activity).apply {
-            text = "更新日志："
-            textSize = 13.5f
-            setTextColor(androidx.core.content.ContextCompat.getColor(activity, R.color.text_secondary))
-            setPadding(0, (10 * d).toInt(), 0, (2 * d).toInt())
-        })
-        body.addView(ScrollView(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, (200 * d).toInt())
+        body.addView(LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
             addView(TextView(activity).apply {
-                text = release.body.ifBlank { "（发布者未填写更新日志）" }
-                textSize = 13f
-                setTextColor(androidx.core.content.ContextCompat.getColor(activity, R.color.text_primary))
-                setPadding(0, 0, 0, (8 * d).toInt())
+                text = "v${currentVersionName()}"
+                textSize = 15f
+                setTextColor(secondary)
             })
+            addView(TextView(activity).apply {
+                text = "  →  "
+                textSize = 15f
+                setTextColor(secondary)
+            })
+            addView(TextView(activity).apply {
+                text = release.tagName.removePrefix("v")
+                textSize = 20f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(primary)
+            })
+        })
+        body.addView(TextView(activity).apply {
+            text = "安装包大小：${"%.1f".format(release.apkSize / 1048576f)} MB"
+            textSize = 13f
+            setTextColor(secondary)
+            setPadding(0, (8 * d).toInt(), 0, 0)
+        })
+        body.addView(TextView(activity).apply {
+            text = "更新将覆盖安装，数据保留；校验通过后自动进入系统安装器。"
+            textSize = 12.5f
+            setTextColor(secondary)
+            setPadding(0, (4 * d).toInt(), 0, 0)
         })
 
-        val dialog = AlertDialog.Builder(activity)
+        val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(activity)
             .setTitle("发现新版本")
             .setView(body)
             .setCancelable(!release.force)          // 强制更新时不可关闭
@@ -174,7 +183,7 @@ class UpdateManager(private val activity: Activity) {
             .create()
         dialog.setCanceledOnTouchOutside(!release.force)
         dialog.show()
-        if (release.force) dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.visibility = View.GONE
+        if (release.force) dialog.getButton(android.app.AlertDialog.BUTTON_NEGATIVE)?.visibility = View.GONE
     }
 
     // ------------------------------------------------------------------
@@ -211,7 +220,7 @@ class UpdateManager(private val activity: Activity) {
             ).apply { topMargin = (10 * d).toInt() }
             max = 100
         })
-        progressDialog = AlertDialog.Builder(activity)
+        progressDialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(activity)
             .setTitle("正在下载更新")
             .setView(box)
             .setCancelable(false)
@@ -265,7 +274,7 @@ class UpdateManager(private val activity: Activity) {
     /** 下载失败 / 校验失败：显示具体原因，支持重新下载（保留断点） */
     private fun failDialog(release: ReleaseInfo, reason: String) {
         if (activity.isFinishing || activity.isDestroyed) return
-        AlertDialog.Builder(activity)
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(activity)
             .setTitle("更新失败")
             .setMessage("$reason\n\n已安装的版本不受影响，可以继续正常使用。")
             .setCancelable(true)
@@ -318,7 +327,7 @@ class UpdateManager(private val activity: Activity) {
         // Android 8.0+：需要「允许安装未知应用」授权（本应用自己安装自己）
         if (Build.VERSION.SDK_INT >= 26 && !activity.packageManager.canRequestPackageInstalls()) {
             pendingInstallApk = apk
-            AlertDialog.Builder(activity)
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(activity)
                 .setTitle("需要安装权限")
                 .setMessage(
                     "安装更新需要允许本应用「安装未知应用」。\n\n" +
