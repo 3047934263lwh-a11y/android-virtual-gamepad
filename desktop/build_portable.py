@@ -142,7 +142,9 @@ def assemble() -> None:
     os.makedirs(cfg_dir, exist_ok=True)
     # 预置默认配置：解压后目录结构完整，用户也可直接改端口后再分发
     with open(os.path.join(cfg_dir, "settings.ini"), "w", encoding="utf-8") as fh:
-        fh.write("[General]\nport=26760\nauto=true\nvigem=true\ndebug=false\n")
+        # 与 desktop/main.py 保持一致：auto（启动时自动监听）已于 2026-11-06 移除，
+        # 应用固定以 STOPPED 启动、需手动 START，故预置配置不再写入 auto 键。
+        fh.write("[General]\nport=26760\nvigem=true\ndebug=false\n")
     with open(os.path.join(OUT, "使用说明.txt"), "w", encoding="utf-8-sig") as fh:
         fh.write(README)
 

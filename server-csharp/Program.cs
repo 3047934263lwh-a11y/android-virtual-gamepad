@@ -47,7 +47,7 @@ internal static class Program
             Fail("无法加载 ViGEmBus 驱动", ex);
             Console.WriteLine();
             Console.WriteLine("  请依次确认：");
-            Console.WriteLine("  1. 已安装 ViGEmBus 1.22.0（ViGEmBus_1.22.0_x64_x86_arm64.exe）");
+            Console.WriteLine("  1. 已安装 ViGEmBus 1.17.333 及以上（推荐随包离线 MSI，不必追 1.22.0）");
             Console.WriteLine("  2. 安装完成后已重启计算机（驱动服务需要重启才能加载）");
             Console.WriteLine("  3. 设备管理器 → 系统设备 中存在 \"Virtual Gamepad Emulation Bus\"");
             Console.WriteLine("  下载: https://github.com/nefarius/ViGEmBus/releases");
@@ -118,7 +118,8 @@ internal static class Program
         {
             Fail($"无法绑定 UDP 端口 {port}", ex);
             Console.WriteLine("  端口可能被占用，或需要管理员权限。可指定其他端口：");
-            Console.WriteLine("  VirtualGamepadServer.exe 26761");
+            // 26761 是手机端回传端口，不能拿来当 PC 接收端口举例
+            Console.WriteLine("  VirtualGamepadServer.exe 26762");
             return 1;
         }
 
@@ -183,7 +184,12 @@ internal static class Program
             try
             {
                 int received = socket.ReceiveFrom(buffer, ref remote);
-                if (!GamepadProtocol.TryParse(buffer, received, out var state))
+                // VGPQ 告别包是 8 字节控制包，必须在 20 字节输入报文解析之前拦截，
+                // 否则会被 TryParse 判为非法。布局与兼容约定见 PROTOCOL.md §1.3.1。
+                // 无论是否告别包都调用 TryParse，保证 state 已明确赋值。
+                bool parsed = GamepadProtocol.TryParse(buffer, received, out GamepadState state);
+                bool goodbye = IsGoodbye(buffer, received);
+                if (!parsed && !goodbye)
                 {
                     continue;
                 }
@@ -195,11 +201,33 @@ internal static class Program
                 while (socket.Available > 0)
                 {
                     received = socket.ReceiveFrom(buffer, ref remote);
+                    if (IsGoodbye(buffer, received))
+                    {
+                        goodbye = true;
+                        goodRemote = remote;
+                        continue;
+                    }
                     if (GamepadProtocol.TryParse(buffer, received, out var newer))
                     {
                         state = newer;
+                        goodbye = false;   // 告别包之后又到了新输入，以输入为准
                         goodRemote = remote;
                     }
+                }
+
+                if (goodbye)
+                {
+                    // 本参考实现是单人版（无槽位表 / TTL），「立即释放」等价于
+                    // 回中 + 清空客户端；手机随后不再发包，也不会再收到震动。
+                    ApplyState(pad, GamepadState.Neutral);
+                    pad.SubmitReport();
+                    neutral = true;
+                    lastSeq = -1;
+                    activeClient = null;
+                    _lastClient = null;
+                    Console.WriteLine();
+                    Console.WriteLine("[断开] 手机端告别（VGPQ），已立即回中。");
+                    continue;
                 }
 
                 if (goodRemote is IPEndPoint ep)
@@ -358,7 +386,7 @@ internal static class Program
     {
         Console.WriteLine("============================================================");
         Console.WriteLine("  虚拟 Xbox 360 手柄 · PC 接收端");
-        Console.WriteLine("  依赖: ViGEmBus 1.22.0（内核驱动，安装后需重启系统）");
+        Console.WriteLine("  依赖: ViGEmBus 1.17.333 及以上（内核驱动，安装后需重启系统）");
         Console.WriteLine("  用法: VirtualGamepadServer.exe [端口]   默认 26760");
         Console.WriteLine("============================================================");
         Console.WriteLine();
@@ -380,6 +408,19 @@ internal static class Program
 
         Console.WriteLine($"[错误] 端口参数无效：{args[0]}");
         return false;
+    }
+
+    /// <summary>
+    /// VGPQ 会话结束包：8 字节，"VGPQ" + version(1) + payload/payload2/reserved(0)。
+    /// 手机 → PC 表示主动断开；PC → 手机由主接收端发送，本单人参考实现不发送。
+    /// 旧版手机不发此包，靠主接收端的 2 秒 TTL 兜底（本简化版无槽位表）。
+    /// </summary>
+    private static bool IsGoodbye(byte[] buf, int len)
+    {
+        return len == 8
+               && buf[0] == (byte)'V' && buf[1] == (byte)'G'
+               && buf[2] == (byte)'P' && buf[3] == (byte)'Q'
+               && buf[4] == 1;
     }
 
     private static double ElapsedMs(long since)

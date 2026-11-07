@@ -8,7 +8,7 @@
 
 依赖：
     pip install vgamepad
-    Windows 上必须先安装 ViGEmBus 1.22.0。
+    Windows 上必须先安装 ViGEmBus 1.17.333 及以上（推荐随包离线 MSI）。
 
 用法：
     python server.py [端口] [--debug]
@@ -34,9 +34,11 @@ VERSION = 1
 PACKET_SIZE = 20
 IDLE_RESET_SEC = 1.2
 MAX_PLAYERS = 4          # XInput 最多 4 个手柄
-# 离线超过该秒数就回收槽位。短暂断线（< TTL）仍保持原编号；
-# 超时后才让位给新设备，避免累计 4 台手机后第 5 台永久被拒。
-SLOT_TTL_SEC = 300.0
+# 离线超过该秒数就回收槽位，与 desktop/receiver.py 保持一致（2026-11-06 由
+# 300 → 5 → 2 秒）。短暂断线（< TTL）仍保持原编号；超时后才让位给新设备，
+# 避免累计 4 台手机后第 5 台永久被拒。新版手机端主动断开会发 VGPQ 告别包，
+# 见下方接收循环中的提前释放分支；TTL 仅作为旧版 APK／崩溃／断电的兜底。
+SLOT_TTL_SEC = 2.0
 
 BTN_MAP = (
     (1 << 0, vg.XUSB_BUTTON.XUSB_GAMEPAD_A),
@@ -248,6 +250,21 @@ def main() -> int:
 
             # ---- 逐玩家应用最新状态 ----
             for ip, (data, addr) in latest.items():
+                # 手机端 VGPQ 告别包（与 desktop/receiver.py 一致）：立即释放该
+                # 来源的槽位，不等 TTL。必须在 parse() 之前拦截——8 字节控制包
+                # 会被 20 字节输入报文解析器判为非法；旧版手机不发此包，走 TTL。
+                if data.startswith(b"VGPQ") and len(data) == 8 and data[4] == VERSION:
+                    p = players.get(ip)
+                    if p is not None:
+                        unplug_pad(p.pad)
+                        RUMBLE_ADDRS.pop(p.idx, None)
+                        with players_lock:
+                            players.pop(ip, None)
+                        free_slots.append(p.idx)
+                        free_slots.sort()
+                        print(f"\n[{p.idx + 1}P] 已断开（客户端告别），槽位已释放",
+                              flush=True)
+                    continue
                 parsed = parse(data)
                 if parsed is None:
                     continue

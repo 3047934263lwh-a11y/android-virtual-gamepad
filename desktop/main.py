@@ -276,10 +276,12 @@ class MainWindow(QMainWindow):
         lay.addWidget(helper)
         lay.addSpacing(12)
 
-        self.auto_cb = QCheckBox("启动时自动监听")
+        # 「启动时自动监听」已于 2026-11-06 移除：应用固定以 STOPPED 启动、
+        # 需手动 START。_hidden_compat() 仍保留隐藏的 auto_cb 兼容对象，
+        # 这里不再创建可见控件，避免留下一个点了没有任何效果的假开关。
         self.vigem_cb = QCheckBox("启用 ViGEm 虚拟手柄输出")
         self.debug_cb = QCheckBox("调试模式 · 打印逐帧报文")
-        for cb in (self.auto_cb, self.vigem_cb, self.debug_cb):
+        for cb in (self.vigem_cb, self.debug_cb):
             cb.setFont(font(9))
             cb.setCursor(Qt.CursorShape.PointingHandCursor)
             lay.addWidget(cb)
