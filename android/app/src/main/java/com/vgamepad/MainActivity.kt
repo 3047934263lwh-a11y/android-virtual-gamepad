@@ -1479,31 +1479,25 @@ class MainActivity : AppCompatActivity() {
             isClickable = true            // 吞掉面板外的点击
             setOnClickListener { hideSettings() }
         }
-        // ---- 上下框毛玻璃：面板弹出前截取整屏内容，模糊后按「边缘 100% -> 向中间渐隐到 0」绘制 ----
+        // ---- 面板内上下边缘毛玻璃：只截取游戏视图本体（不截顶栏，避免把硬件渲染特效的
+        //      视图拉进软件画布破坏其状态），1/14 降采样近似模糊，卡片按圆角裁剪后，
+        //      上下各贴一条「贴边 100% -> 向内渐隐到 0」的模糊带 ----
+        var blurred: android.graphics.Bitmap? = null
         try {
-            val rootVG = findViewById<android.view.ViewGroup>(R.id.root)
-            if (rootVG.width > 0 && rootVG.height > 0) {
+            val gv = gamepadView
+            if (gv.width > 0 && gv.height > 0) {
                 val snap = android.graphics.Bitmap.createBitmap(
-                    rootVG.width, rootVG.height, android.graphics.Bitmap.Config.ARGB_8888
+                    gv.width, gv.height, android.graphics.Bitmap.Config.ARGB_8888
                 )
-                rootVG.draw(android.graphics.Canvas(snap))
-                // 降采样近似模糊：1/14 缩小再放大回半尺寸（内存减半，视觉足够糊）
-                val sw = (rootVG.width / 14).coerceAtLeast(1)
-                val sh = (rootVG.height / 14).coerceAtLeast(1)
+                gv.draw(android.graphics.Canvas(snap))
+                val sw = (gv.width / 14).coerceAtLeast(1)
+                val sh = (gv.height / 14).coerceAtLeast(1)
                 val small = android.graphics.Bitmap.createScaledBitmap(snap, sw, sh, true)
-                val blurred = android.graphics.Bitmap.createScaledBitmap(
-                    small, rootVG.width / 2, rootVG.height / 2, true
+                blurred = android.graphics.Bitmap.createScaledBitmap(
+                    small, gv.width / 2, gv.height / 2, true
                 )
                 if (small !== snap) small.recycle()
                 snap.recycle()
-                overlay.addView(
-                    BackdropBlurView(ctx, blurred),
-                    0,
-                    android.view.ViewGroup.LayoutParams(
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
-                    )
-                )
             }
         } catch (e: Exception) {
             // 截图失败（内存不足等）只损失装饰效果，设置面板照常弹出
@@ -1523,7 +1517,36 @@ class MainActivity : AppCompatActivity() {
                 bottomMargin = (10 * dm.density).toInt()
             }
         }
+        card.clipToOutline = true     // 按 bg_panel 的 26dp 圆角裁剪，模糊带贴合圆角
         card.addView(content)
+        // 面板内上下两条毛玻璃带：从底图对应屏幕位置取样，纹理与背景连续
+        blurred?.let { bm ->
+            val d = dm.density
+            val stripH = (72 * d).toInt()
+            val cardH = (dm.heightPixels * 0.86f).toInt()
+            val bottomM = (10 * d).toInt()
+            val cardTop = (dm.heightPixels - bottomM - cardH).toFloat()
+            val scale = bm.width.toFloat() / gamepadView.width
+            val hPix = bm.height.toFloat()
+            fun fr(y: Float): Float = (y * scale / hPix).coerceIn(0f, 1f)
+            card.addView(
+                BackdropBlurView(ctx, bm, fr(cardTop), fr(cardTop + stripH), edgeTop = true),
+                android.widget.FrameLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT, stripH
+                ).apply { gravity = android.view.Gravity.TOP }
+            )
+            card.addView(
+                BackdropBlurView(
+                    ctx, bm,
+                    fr((dm.heightPixels - bottomM - stripH).toFloat()),
+                    fr((dm.heightPixels - bottomM).toFloat()),
+                    edgeTop = false
+                ),
+                android.widget.FrameLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT, stripH
+                ).apply { gravity = android.view.Gravity.BOTTOM }
+            )
+        }
         overlay.addView(card)
         root.addView(overlay)
         settingsOverlay = overlay
