@@ -46,6 +46,9 @@ jobs:
           fi
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/vgamepad-release.keystore"
           echo "KEYSTORE_FILE=$RUNNER_TEMP/vgamepad-release.keystore" >> "$GITHUB_ENV"
+          echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
           echo "签名密钥已就位：$(ls -la "$RUNNER_TEMP/vgamepad-release.keystore")"
 
       - name: 安装 Gradle 8.9
