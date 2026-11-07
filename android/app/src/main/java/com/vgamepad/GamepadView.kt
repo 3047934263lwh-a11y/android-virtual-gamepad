@@ -155,6 +155,9 @@ class GamepadView @JvmOverloads constructor(
         const val DOUBLE_TAP_MS = 400L
         /** 扳机：手指纵向移动超过该距离才进入「按位置调节」模式，否则单击即满行程 */
         const val TRIGGER_DRAG_SLOP_DP = 8f
+        /** 扳机（LT/RT）触发方式：与设置面板的两个选项一一对应 */
+        const val TRIGGER_SLIDE_OFF = 0   // 按下后不触发滑动（滑动不改行程，始终满拉）
+        const val TRIGGER_SLIDE_ON = 1    // 按下后允许滑动（纵向拖动按位置连续调节）
         /** 方向键中心死区：距圆心小于该比例时不触发任何方向 */
         const val DPAD_CENTER_DEAD = 0.18f
 
@@ -639,6 +642,21 @@ class GamepadView @JvmOverloads constructor(
         lsTapOk = false
         rsTapOk = false
     }
+
+    /**
+     * 扳机（LT/RT）触发方式（0=按下后不触发滑动 / 1=按下后允许滑动）。
+     * 切换时取消进行中的扳机拖动，避免旧模式的状态跨模式残留。
+     */
+    var triggerSlide = TRIGGER_SLIDE_ON
+        set(value) {
+            if (field == value) return
+            field = value
+            if (value == TRIGGER_SLIDE_OFF) {
+                ltDragging = false
+                rtDragging = false
+            }
+            invalidate()
+        }
 
     private var lsDownX = 0f
     private var lsDownY = 0f
@@ -1806,10 +1824,10 @@ class GamepadView @JvmOverloads constructor(
                         Z_RSTICK -> if (hypot(event.getX(i) - rsDownX,
                                               event.getY(i) - rsDownY) > slop
                         ) rsTapOk = false
-                        Z_LT -> if (!ltDragging &&
+                        Z_LT -> if (triggerSlide == TRIGGER_SLIDE_ON && !ltDragging &&
                             abs(event.getY(i) - ltDownY) > dp(TRIGGER_DRAG_SLOP_DP)
                         ) ltDragging = true
-                        Z_RT -> if (!rtDragging &&
+                        Z_RT -> if (triggerSlide == TRIGGER_SLIDE_ON && !rtDragging &&
                             abs(event.getY(i) - rtDownY) > dp(TRIGGER_DRAG_SLOP_DP)
                         ) rtDragging = true
                     }

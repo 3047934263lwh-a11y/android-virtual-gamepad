@@ -54,6 +54,9 @@ class MainActivity : AppCompatActivity() {
         const val CLICK_CENTER = 0
         const val CLICK_DOUBLE = 1
         const val CLICK_ALWAYS = 2
+        /** 与 GamepadView 的 TRIGGER_SLIDE_* 保持一致 */
+        const val TRIG_SLIDE_OFF = 0
+        const val TRIG_SLIDE_ON = 1
         /** 曾收到过回包、但超过该时间没再收到 → 触发自动重连（既有行为不变） */
         const val LINK_LOST_MS = 6000L
         /** 状态栏显示用兜底超时：PC 未发 VGPQ 时也能较快切「未连接」；
@@ -97,6 +100,8 @@ class MainActivity : AppCompatActivity() {
     private var stickSens = 50f
     /** 摇杆按下（LS/RS）触发方式：0=轻点中心 1=双击区域内任意位置 2=操作摇杆即按下 */
     private var stickClickMode = CLICK_CENTER
+    /** 扳机（LT/RT）触发方式：0=按下后不触发滑动 1=按下后允许滑动（默认，兼容旧版行为） */
+    private var triggerSlide = TRIG_SLIDE_ON
     private lateinit var sender: UdpSender
 
     private lateinit var editBar: LinearLayout
@@ -430,6 +435,9 @@ class MainActivity : AppCompatActivity() {
         stickClickMode = prefs.getInt("stick_click_mode", CLICK_CENTER)
             .coerceIn(CLICK_CENTER, CLICK_ALWAYS)
         gamepadView.stickClickMode = stickClickMode
+        triggerSlide = prefs.getInt("trigger_slide", TRIG_SLIDE_ON)
+            .coerceIn(TRIG_SLIDE_OFF, TRIG_SLIDE_ON)
+        gamepadView.triggerSlide = triggerSlide
         gyroAim?.invertY = prefs.getBoolean("gyro_invert_y", false)
         gyroAim?.invertX = prefs.getBoolean("gyro_invert_x", false)
     }
@@ -441,7 +449,7 @@ class MainActivity : AppCompatActivity() {
             .setMessage(
                 "将把所有设置恢复为软件默认值：\n" +
                 "按键布局、隐藏的按键、三个尺寸滑杆、两路视角灵敏度、" +
-                "摇杆按下方式、陀螺仪开关与反向、按键触感与游戏震动回传。\n\n" +
+                "摇杆按下方式、扳机触发方式、陀螺仪开关与反向、按键触感与游戏震动回传。\n\n" +
                 "当前连接的电脑 IP 和端口会保留，不会断开连接。"
             )
             .setNegativeButton("取消", null)
@@ -985,6 +993,39 @@ class MainActivity : AppCompatActivity() {
         }
         container.addView(clickGroup)
 
+        container.addView(label("扳机（LT / RT）触发方式"))
+        val trigGroup = android.widget.RadioGroup(ctx).apply {
+            orientation = android.widget.RadioGroup.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val trigOptions = arrayOf(
+            "按下后不触发滑动（点按即满行程，滑动不改变扳机）",
+            "按下后允许滑动（纵向拖动按位置连续调节）"
+        )
+        trigOptions.forEachIndexed { idx, text ->
+            val rb = com.google.android.material.radiobutton.MaterialRadioButton(ctx).apply {
+                // 与上方 clickGroup（1000+idx）错开，避免 RadioGroup 互斥串组
+                id = 1100 + idx
+                this.text = text
+                textSize = 14f
+                setTextColor(ContextCompat.getColor(ctx, R.color.text_primary))
+                isChecked = triggerSlide == idx
+                setPadding(0, (6 * d).toInt(), 0, (6 * d).toInt())
+                setOnCheckedChangeListener { _, checked ->
+                    if (checked) {
+                        triggerSlide = idx
+                        gamepadView.triggerSlide = idx
+                        prefs.edit().putInt("trigger_slide", idx).apply()
+                    }
+                }
+            }
+            trigGroup.addView(rb)
+        }
+        container.addView(trigGroup)
+
         container.addView(label("控件整体大小（50 = 默认）"))
         container.addView(
             sizeSlider(gamepadView.uiScale) {
@@ -1103,6 +1144,7 @@ class MainActivity : AppCompatActivity() {
                 "陀螺仪视角灵敏度（65 = 标准）" to Sec(SEC_STICK, false),
                 "右摇杆视角灵敏度（50 = 标准）" to Sec(SEC_STICK, false),
                 "摇杆按下（LS / RS）触发方式" to Sec(SEC_STICK, false),
+                "扳机（LT / RT）触发方式" to Sec(SEC_STICK, false),
                 "控件整体大小（50 = 默认）" to Sec(SEC_LAYOUT, false),
                 "摇杆大小（50 = 默认）" to Sec(SEC_LAYOUT, false),
                 "按键大小（ABXY / 肩键 / 方向键 / 扳机，50 = 默认）" to Sec(SEC_LAYOUT, false),
