@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 应用内更新：APK 下载目录（getExternalFilesDir/Download/update/），
+         通过 FileProvider 以只读 URI 授予系统安装器 -->
+    <external-files-path name="update_apk" path="Download/update/" />
+</paths>

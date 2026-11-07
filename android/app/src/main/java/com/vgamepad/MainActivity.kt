@@ -43,6 +43,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.google.android.material.checkbox.MaterialCheckBox
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.slider.Slider
+import com.vgamepad.updater.UpdateManager
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -102,6 +103,8 @@ class MainActivity : AppCompatActivity() {
     private var stickClickMode = CLICK_CENTER
     /** 扳机（LT/RT）触发方式：0=按下后不触发滑动 1=按下后允许滑动（默认，兼容旧版行为） */
     private var triggerSlide = TRIG_SLIDE_ON
+    /** 应用内自动更新（GitHub Releases 检查 / 下载 / 校验 / 系统安装） */
+    private val updateManager by lazy { UpdateManager(this) }
     private lateinit var sender: UdpSender
 
     private lateinit var editBar: LinearLayout
@@ -317,6 +320,10 @@ class MainActivity : AppCompatActivity() {
         }
         // 统一的「偏好 → 内存状态」入口，onCreate 与「恢复默认」共用
         loadPrefsIntoState()
+
+        // 应用内自动更新：启动延迟检查（内部有 12h 节流 + 网络判断，失败静默）
+        uiHandler.postDelayed({ updateManager.checkOnLaunch() },
+            com.vgamepad.updater.UpdateConfig.LAUNCH_CHECK_DELAY_MS)
 
         // 开关滑块：点一下即切换，滑块左右滑动由 Material 组件自带动画完成
         connectSwitch.onCheckedChange = { checked ->
@@ -1115,6 +1122,21 @@ class MainActivity : AppCompatActivity() {
 
         container.addView(
             GlassButton(ctx).apply {
+                text = "检查更新（当前 v${
+                    try { packageManager.getPackageInfo(packageName, 0).versionName } catch (e: Exception) { "?" }
+                }）"
+                textSize = 13f
+                setPadding((18 * d).toInt(), 0, (18 * d).toInt(), 0)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    (44 * d).toInt()
+                ).also { it.topMargin = (18 * d).toInt() }
+                setOnClickListener { updateManager.manualCheck() }
+            }
+        )
+
+        container.addView(
+            GlassButton(ctx).apply {
                 text = "恢复默认"
                 textSize = 13f
                 setPadding((18 * d).toInt(), 0, (18 * d).toInt(), 0)
@@ -1873,6 +1895,8 @@ class MainActivity : AppCompatActivity() {
         uiHandler.post(watchdog)
         // 之前在后台断开的，回到前台立即补一次重连
         if (!userStopped && !sender.isRunning) scheduleReconnect(500L)
+        // 「未知来源安装」授权回来后，自动继续被暂挂的更新安装
+        updateManager.onHostResume()
     }
 
     override fun onPause() {

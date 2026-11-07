@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- 触感反馈与游戏震动回传 -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 应用内自动更新：允许本应用调起系统安装器安装自己的新版本
+         （Android 8.0+ 首次安装前用户仍需在系统界面确认「允许安装未知应用"） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="false"
@@ -31,6 +34,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 自动更新：向系统安装器安全共享已校验的 APK 文件（只读） -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updateprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>
