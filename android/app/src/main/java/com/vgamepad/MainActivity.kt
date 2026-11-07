@@ -1530,7 +1530,12 @@ class MainActivity : AppCompatActivity() {
             val hPix = bm.height.toFloat()
             fun fr(y: Float): Float = (y * scale / hPix).coerceIn(0f, 1f)
             card.addView(
-                BackdropBlurView(ctx, bm, fr(cardTop), fr(cardTop + stripH), edgeTop = true),
+                BackdropBlurView(
+                    ctx, bm, fr(cardTop), fr(cardTop + stripH), edgeTop = true,
+                    tint = ContextCompat.getColor(ctx, R.color.panel_bg).let {
+                        androidx.core.graphics.ColorUtils.setAlphaComponent(it, 0xE6)
+                    }
+                ),
                 android.widget.FrameLayout.LayoutParams(
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT, stripH
                 ).apply { gravity = android.view.Gravity.TOP }
@@ -1540,7 +1545,10 @@ class MainActivity : AppCompatActivity() {
                     ctx, bm,
                     fr((dm.heightPixels - bottomM - stripH).toFloat()),
                     fr((dm.heightPixels - bottomM).toFloat()),
-                    edgeTop = false
+                    edgeTop = false,
+                    tint = ContextCompat.getColor(ctx, R.color.panel_bg).let {
+                        androidx.core.graphics.ColorUtils.setAlphaComponent(it, 0xE6)
+                    }
                 ),
                 android.widget.FrameLayout.LayoutParams(
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT, stripH
