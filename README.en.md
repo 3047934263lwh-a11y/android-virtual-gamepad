@@ -31,9 +31,6 @@ No controller to buy — connect your Android phone to a Windows PC over Wi-Fi a
 | Existing gamepad apps feel awkward to hold | 19 controls with per-control position / size / opacity, five theme colours, light / dark / system |
 | You want to build on it | 20-byte fixed UDP protocol with shared test vectors, MIT licensed, documented |
 
-**Not a fit**: rhythm games and frame-perfect fighters (Wi-Fi latency sets the floor), DirectInput-only
-legacy titles, or macOS / Linux hosts.
-
 ---
 
 ## How it differs from other "phone as gamepad" approaches

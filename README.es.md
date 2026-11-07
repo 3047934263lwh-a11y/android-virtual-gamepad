@@ -31,9 +31,6 @@ Sin comprar mando: conecta el móvil Android al PC con Windows por Wi-Fi y los j
 | La disposición de otras apps no te encaja | 19 controles con posición / tamaño / opacidad individuales, cinco temas y modo claro / oscuro / sistema |
 | Quieres integrarlo en tus propios scripts | Protocolo UDP de 20 bytes con vectores de prueba compartidos, licencia MIT |
 
-**No encaja en**: juegos de ritmo y fighters que exigen precisión de frame (la latencia Wi-Fi marca el
-límite), títulos antiguos solo DirectInput, ni equipos macOS / Linux.
-
 ---
 
 ## En qué se diferencia de otras soluciones
