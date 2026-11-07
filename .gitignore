@@ -3,6 +3,8 @@ android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
+# 正式签名配置含明文密码，严禁入库
+android/keystore.properties
 android/.idea/
 android/captures/
 *.apk

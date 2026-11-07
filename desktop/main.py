@@ -70,7 +70,7 @@ from widgets import (  # noqa: E402
 APP_ORG = "VirtualGamepad"
 APP_NAME = "PCReceiver"
 DEFAULT_PORT = 26760
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 # 边缘缩放热区不接管这些控件：避免窗口贴边时吞掉按钮/输入/表格的正常点击
 RESIZE_EXCLUDED = (

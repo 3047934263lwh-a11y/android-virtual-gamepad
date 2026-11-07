@@ -6,7 +6,7 @@
 
 产物：
     ../release/VirtualGamepadReceiver-Portable/                 完整程序目录
-    ../release/VirtualGamepadReceiver-Portable-v1.1.0-win64.zip  拷贝即用压缩包
+    ../release/VirtualGamepadReceiver-Portable-v1.1.1-win64.zip  拷贝即用压缩包
 
 脚本会：生成图标 → 冻结为原生窗口 EXE（onedir）→ 补齐 VC++ 运行库与
 许可文件 → 组织交付目录 → 结构校验 → 打包 zip。
@@ -26,7 +26,7 @@ DIST = os.path.join(RELEASE, "_dist_tmp")
 WORK = os.path.join(RELEASE, "_build_tmp")
 PKG = "VirtualGamepadReceiver-Portable"
 OUT = os.path.join(RELEASE, PKG)
-ZIP = os.path.join(RELEASE, f"{PKG}-v1.1.0-win64.zip")
+ZIP = os.path.join(RELEASE, f"{PKG}-v1.1.1-win64.zip")
 EXE = "VirtualGamepadReceiver.exe"
 
 # VC++ 2015-2022 运行库：Qt6 / CPython 在干净的 Windows 上也可能需要，
@@ -37,7 +37,7 @@ VCRUNTIME = (
     "concrt140.dll",
 )
 
-README = """VIRTUAL GAMEPAD  ·  PC RECEIVER  ·  便携版 v1.1.0
+README = """VIRTUAL GAMEPAD  ·  PC RECEIVER  ·  便携版 v1.1.1
 ==================================================
 
 【启动】
@@ -178,26 +178,35 @@ def assemble() -> None:
             )
 
 
-    # 手机端 APK 随包：早期 v1.0.x 便携包即内含 APK，解压后无需再单独下载
-    apk_src = os.path.abspath(os.path.join(
-        ROOT, "..", "android", "app", "build", "outputs", "apk", "debug",
-        "app-debug.apk"))
-    if os.path.isfile(apk_src):
+    # 手机端 APK 随包：优先取与当前 Release 同版的待发布 APK
+    # （release/_staging/），其次正式签名的 assembleRelease 产物，
+    # 最后回退 debug 产物。解压后无需再单独下载手机端。
+    apk_name = "VirtualGamepad-v1.1.1.apk"
+    apk_candidates = [
+        os.path.join(RELEASE, "_staging", apk_name),
+        os.path.join(REPO, "android", "app", "build", "outputs", "apk",
+                     "release", "app-release.apk"),
+        os.path.join(REPO, "android", "app", "build", "outputs", "apk",
+                     "debug", "app-debug.apk"),
+    ]
+    apk_src = next((p for p in apk_candidates if os.path.isfile(p)), None)
+    if apk_src:
         phone_dir = os.path.join(OUT, "手机端")
         os.makedirs(phone_dir, exist_ok=True)
-        shutil.copy2(apk_src, os.path.join(phone_dir,
-                                           "VirtualGamepad-v1.1.0-debug.apk"))
+        shutil.copy2(apk_src, os.path.join(phone_dir, apk_name))
+        print(f"随包 APK：{apk_src}", flush=True)
         with open(os.path.join(phone_dir, "安装说明.txt"), "w",
                   encoding="utf-8-sig") as fh:
             fh.write(
                 "安装步骤\n"
-                "1. 把 VirtualGamepad-v1.1.0-debug.apk 传到安卓手机并安装\n"
+                f"1. 把 {apk_name} 传到安卓手机并安装\n"
                 "   （首次安装需在系统里允许「安装未知来源应用」）。\n"
                 "2. 手机与电脑连同一个 Wi-Fi。\n"
                 "3. 电脑上运行 VirtualGamepadReceiver.exe，点 START。\n"
                 "4. 手机打开 App，把 IP 填成电脑的局域网地址（接收端界面左上角显示），\n"
                 "   端口保持 26760，状态条变绿即已连接。\n"
-                "说明：这是 debug 签名包，可直接安装；如需正式签名请自行重打包。\n"
+                "说明：随包 APK 与当前 Release 的手机端版本一致；\n"
+                "      也可在 App 内「检查更新」获取最新版本。\n"
             )
 
 
