@@ -51,10 +51,31 @@ jobs:
           echo "KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
           echo "签名密钥已就位：$(ls -la "$RUNNER_TEMP/vgamepad-release.keystore")"
 
-      - name: 安装 Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
+      # 原用 gradle/actions/setup-gradle@v4，2026-11-08 起 services.gradle.org
+      # 持续返回 504，构建在「下载 Gradle 发行包」这一步反复失败（与代码无关）。
+      # 改为多镜像回退下载并手动放进 PATH，绕开单一分发源。
+      - name: 安装 Gradle 8.9（多镜像回退）
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          urls=(
+            "https://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip"
+            "https://mirrors.aliyun.com/gradle/gradle-8.9-bin.zip"
+            "https://downloads.gradle-dn.com/distributions/gradle-8.9-bin.zip"
+            "https://services.gradle.org/distributions/gradle-8.9-bin.zip"
+          )
+          ok=0
+          for u in "${urls[@]}"; do
+            echo "::group::尝试下载 $u"
+            if curl -fL --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 240 -o gradle.zip "$u"; then
+              if unzip -q -o gradle.zip && [ -d gradle-8.9 ]; then ok=1; echo "下载成功"; fi
+            fi
+            echo "::endgroup::"
+            if [ "$ok" = "1" ]; then break; fi
+          done
+          if [ "$ok" != "1" ]; then echo "::error::所有镜像下载 Gradle 均失败"; exit 1; fi
+          echo "$RUNNER_TEMP/gradle-8.9/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/gradle-8.9/bin/gradle" --version
 
       - name: 构建正式签名 APK
         run: |
