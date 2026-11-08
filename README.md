@@ -68,7 +68,7 @@ PC 侧必然有驱动。好处是装完之后，任何走 XInput 的游戏都**�
 ```
 VirtualGamepadReceiver-Portable/
 ├─ VirtualGamepadReceiver.exe      PC 接收端（免安装，双击即运行）
-├─ 手机端/VirtualGamepad-v1.1.0-debug.apk    手机 App
+├─ 手机端/VirtualGamepad-v1.1.3.apk    手机 App
 ├─ 可选驱动/ViGEmBusSetup_x64.msi           876 KB 离线驱动
 └─ 使用说明.txt
 ```
@@ -137,6 +137,7 @@ Windows 上游戏读手柄走两条互不相通的路：**XInput**（`xinput1_4.
 | 震动回传实现（含句柄死锁坑） | [docs/RUMBLE-2026-11-06.md](docs/RUMBLE-2026-11-06.md) |
 | 「一直正在重连」根因与修复 | [docs/CONNECTION-FIX-2026-11-06.md](docs/CONNECTION-FIX-2026-11-06.md) |
 | 代码审计与测试报告 | [docs/AUDIT.md](docs/AUDIT.md) · [docs/CODE-AUDIT-2026-11-04.md](docs/CODE-AUDIT-2026-11-04.md) · [docs/TEST-REPORT.md](docs/TEST-REPORT.md) |
+| 各版本更新内容 | [docs/CHANGELOG.md](docs/CHANGELOG.md) |
 
 配套 4 款测试游戏在 `game/`，直接读 XInput，用来验证摇杆行程、扳机深度、双摇杆同时操作。
 

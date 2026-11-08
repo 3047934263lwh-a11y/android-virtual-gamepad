@@ -69,7 +69,7 @@
 ```
 VirtualGamepadReceiver-Portable/
 ├─ VirtualGamepadReceiver.exe     PC レシーバー（インストール不要）
-├─ 手机端/VirtualGamepad-v1.1.0-debug.apk    スマホアプリ
+├─ 手机端/VirtualGamepad-v1.1.3.apk    スマホアプリ
 ├─ 可选驱动/ViGEmBusSetup_x64.msi            876 KB オフラインドライバ
 └─ 使用説明.txt
 ```

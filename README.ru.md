@@ -69,7 +69,7 @@ Windows — из пользовательского режима нельзя з
 ```
 VirtualGamepadReceiver-Portable/
 ├─ VirtualGamepadReceiver.exe     приёмник для ПК (без установки)
-├─ 手机端/VirtualGamepad-v1.1.0-debug.apk    приложение для смартфона
+├─ 手机端/VirtualGamepad-v1.1.3.apk    приложение для смартфона
 ├─ 可选驱动/ViGEmBusSetup_x64.msi            офлайн-драйвер 876 КБ
 └─ 使用说明.txt
 ```

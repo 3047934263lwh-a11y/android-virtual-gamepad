@@ -68,7 +68,7 @@ driver behind it. Once installed, every XInput title picks it up **natively**.
 ```
 VirtualGamepadReceiver-Portable/
 ├─ VirtualGamepadReceiver.exe     PC receiver (portable, just double-click)
-├─ 手机端/VirtualGamepad-v1.1.0-debug.apk    Phone app
+├─ 手机端/VirtualGamepad-v1.1.3.apk    Phone app
 ├─ 可选驱动/ViGEmBusSetup_x64.msi            876 KB offline driver
 └─ 使用说明.txt
 ```

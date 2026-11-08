@@ -68,7 +68,7 @@ tiene un driver detrás. Una vez instalado, cualquier juego XInput lo detecta **
 ```
 VirtualGamepadReceiver-Portable/
 ├─ VirtualGamepadReceiver.exe     Receptor de PC (portable, doble clic)
-├─ 手机端/VirtualGamepad-v1.1.0-debug.apk    App del móvil
+├─ 手机端/VirtualGamepad-v1.1.3.apk    App del móvil
 ├─ 可选驱动/ViGEmBusSetup_x64.msi            Driver offline de 876 KB
 └─ 使用说明.txt
 ```

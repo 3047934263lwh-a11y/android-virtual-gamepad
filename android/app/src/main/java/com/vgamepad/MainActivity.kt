@@ -129,6 +129,11 @@ class MainActivity : AppCompatActivity() {
 
     // ---- 运行期自动重连（用户主动断开时不再自动连回） ----
     private var userStopped = false
+    /** 用户本次是否「主动发起过连接且未撤销」。
+     *  冷启动恒为 false：没有用户点击就不存在会话，因此不显示中断/重连提示，
+     *  也不允许 watchdog 或网络回调自行发起连接。仅在 connect() 置 true、
+     *  disconnect() 置 false；Activity 重建时经 savedInstanceState 延续。 */
+    private var sessionActive = false
     private var autoRetryCount = 0
     private var lastReplyAt = 0L
     private var everGotReply = false
@@ -209,7 +214,7 @@ class MainActivity : AppCompatActivity() {
             }
             applyGyroState()          // 链路停止 → 同步停传感器，避免后台耗电
             renderStatus()
-            if (!userStopped) scheduleReconnect()
+            if (!userStopped && sessionActive) scheduleReconnect()
         }
 
         override fun onRumble(largeMotor: Int, smallMotor: Int) {
@@ -233,9 +238,12 @@ class MainActivity : AppCompatActivity() {
         VgTheme.applyNightMode(VgTheme.mode(this))
         super.onCreate(savedInstanceState)
         // 主题切换（uiMode 不在 configChanges 内）等场景会重建 Activity：
-        // 恢复「用户已手动断开」标记，避免重建后被无条件自动重连覆盖用户意图
+        // 恢复「用户已手动断开」与「会话已由用户开启」两个标记，
+        // 前者避免重建后被无条件自动重连覆盖用户意图，后者保证重建后链路继续自愈
         if (savedInstanceState != null) {
             userStopped = savedInstanceState.getBoolean("user_stopped", false)
+            sessionActive = savedInstanceState.getBoolean("session_active", false)
+            if (userStopped) sessionActive = false
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_main)
@@ -245,6 +253,12 @@ class MainActivity : AppCompatActivity() {
         gamepadView.applyTheme(VgTheme.resolve(this))
         ipInput = findViewById(R.id.ipInput)
         portInput = findViewById(R.id.portInput)
+        // 横屏 + 沉浸式下输入法极易切到「全屏编辑」（抽取模式）：显式禁用，
+        // 保证点击后在原位置直接弹出常规/悬浮键盘，输入框内联编辑
+        val noExtract = android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI or
+            android.view.inputmethod.EditorInfo.IME_FLAG_NO_FULLSCREEN
+        ipInput.imeOptions = ipInput.imeOptions or noExtract
+        portInput.imeOptions = portInput.imeOptions or noExtract
         connectSwitch = findViewById(R.id.connectSwitch)
         blurOverlay = findViewById(R.id.blurOverlay)
         settingsBtn = findViewById(R.id.settingsBtn)
@@ -380,17 +394,14 @@ class MainActivity : AppCompatActivity() {
             editBar.visibility = android.view.View.GONE
         }
 
-        // 一键体验：保存过服务器地址且用户未主动断开过就自动连接；
-        // 之后由自动重连状态机维持链路
+        // 网络状态回调只用于「会话已存在时」的快速重连；冷启动不触发任何连接
         registerNetworkCallback()
-        if (!userStopped && prefs.getString("ip", "")?.isNotBlank() == true) {
-            connect()
-        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putBoolean("user_stopped", userStopped)
+        outState.putBoolean("session_active", sessionActive)
     }
 
     /**
@@ -1286,6 +1297,11 @@ class MainActivity : AppCompatActivity() {
     /** 三个槽位的芯片文本引用，buildLayoutSlotRow() 每次打开设置时重建 */
     private val layoutSlotLabels = mutableListOf<TextView>()
 
+    /** 长按菜单的三种动作 */
+    private val SLOT_ACTION_COVER = 0
+    private val SLOT_ACTION_RENAME = 1
+    private val SLOT_ACTION_CLEAR = 2
+
     private fun slotName(i: Int): String =
         prefs.getString("layout_slot_name_$i", null) ?: "布局 $i"
 
@@ -1398,37 +1414,7 @@ class MainActivity : AppCompatActivity() {
                     refreshLayoutSlotRow()
                 }
                 setOnLongClickListener {
-                    val items = arrayOf("用当前布局覆盖此槽", "重命名", "清空此槽")
-                    androidx.appcompat.app.AlertDialog.Builder(ctx)
-                        .setTitle(slotName(i))
-                        .setItems(items) { _, w ->
-                            when (w) {
-                                0 -> {
-                                    prefs.edit()
-                                        .putString("layout_slot_$i", snapshotCurrentLayout())
-                                        .putInt("layout_active_slot", i)
-                                        .apply()
-                                    persistLayoutAll()
-                                    android.widget.Toast.makeText(
-                                        ctx, "已覆盖「${slotName(i)}」",
-                                        android.widget.Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                                1 -> renameLayoutSlot(i)
-                                2 -> {
-                                    prefs.edit().putString("layout_slot_$i", null).apply()
-                                    if (activeSlot() == i) {
-                                        prefs.edit().putInt("layout_active_slot", 0).apply()
-                                    }
-                                    android.widget.Toast.makeText(
-                                        ctx, "已清空「${slotName(i)}」",
-                                        android.widget.Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                            }
-                            refreshLayoutSlotRow()
-                        }
-                        .show()
+                    showSlotMenu(i)
                     true
                 }
             }
@@ -1439,16 +1425,128 @@ class MainActivity : AppCompatActivity() {
         return row
     }
 
+    /**
+     * 布局槽位长按菜单（Material 3 视觉）：
+     * MaterialAlertDialogBuilder + 自绘等高列表项（24dp 图标 + 16sp 标签 + 12dp 圆角涟漪），
+     * 标题走 M3 titleLarge（22sp）与 onSurface 色，替代原先的 AppCompat 纯文本列表。
+     */
+    private fun showSlotMenu(i: Int) {
+        val ctx = this
+        val onSurface = com.google.android.material.color.MaterialColors.getColor(
+            ctx, com.google.android.material.R.attr.colorOnSurface, Color.DKGRAY
+        )
+        val onSurfaceVariant = com.google.android.material.color.MaterialColors.getColor(
+            ctx, com.google.android.material.R.attr.colorOnSurfaceVariant, Color.GRAY
+        )
+        val rippleColor = com.google.android.material.color.MaterialColors.getColor(
+            ctx, com.google.android.material.R.attr.colorControlHighlight, 0x1F000000
+        )
+
+        val entries = listOf(
+            Triple(R.drawable.ic_slot_cover, "用当前布局覆盖此槽", SLOT_ACTION_COVER),
+            Triple(R.drawable.ic_slot_rename, "重命名", SLOT_ACTION_RENAME),
+            Triple(R.drawable.ic_slot_clear, "清空此槽", SLOT_ACTION_CLEAR)
+        )
+
+        val list = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), 0, dp(8), dp(8))
+        }
+        var dialog: androidx.appcompat.app.AlertDialog? = null
+        for ((icon, label, action) in entries) {
+            val row = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(dp(16), dp(14), dp(16), dp(14))
+                isClickable = true
+                isFocusable = true
+                // M3 列表项涟漪：12dp 圆角蒙版，边界内收不压边
+                val mask = GradientDrawable().apply {
+                    cornerRadius = dp(12).toFloat()
+                    setColor(Color.WHITE)
+                }
+                background = android.graphics.drawable.RippleDrawable(
+                    ColorStateList.valueOf(rippleColor), null, mask
+                )
+            }
+            row.addView(ImageView(ctx).apply {
+                setImageResource(icon)
+                imageTintList = ColorStateList.valueOf(onSurfaceVariant)
+                layoutParams = LinearLayout.LayoutParams(dp(24), dp(24))
+            })
+            row.addView(TextView(ctx).apply {
+                text = label
+                textSize = 16f
+                setTextColor(onSurface)
+                setPadding(dp(16), 0, 0, 0)
+            })
+            row.setOnClickListener {
+                dialog?.dismiss()
+                performSlotAction(i, action)
+            }
+            list.addView(row)
+        }
+
+        val title = TextView(ctx).apply {
+            text = slotName(i)
+            textSize = 22f
+            setTextColor(onSurface)
+            setPadding(dp(24), dp(24), dp(24), dp(10))
+        }
+        val content = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(title)
+            addView(list)
+        }
+
+        dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(ctx)
+            .setView(content)
+            .create()
+        dialog.show()
+    }
+
+    private fun performSlotAction(i: Int, action: Int) {
+        when (action) {
+            SLOT_ACTION_COVER -> {
+                prefs.edit()
+                    .putString("layout_slot_$i", snapshotCurrentLayout())
+                    .putInt("layout_active_slot", i)
+                    .apply()
+                persistLayoutAll()
+                Toast.makeText(this, "已覆盖「${slotName(i)}」", Toast.LENGTH_SHORT).show()
+            }
+            SLOT_ACTION_RENAME -> renameLayoutSlot(i)
+            SLOT_ACTION_CLEAR -> {
+                prefs.edit().putString("layout_slot_$i", null).apply()
+                if (activeSlot() == i) {
+                    prefs.edit().putInt("layout_active_slot", 0).apply()
+                }
+                Toast.makeText(this, "已清空「${slotName(i)}」", Toast.LENGTH_SHORT).show()
+            }
+        }
+        refreshLayoutSlotRow()
+    }
+
     private fun renameLayoutSlot(i: Int) {
-        val d = resources.displayMetrics.density
-        val input = android.widget.EditText(this).apply {
+        val input = EditText(this).apply {
             setText(slotName(i))
             setSelection(text.length)
-            setPadding((16 * d).toInt(), (12 * d).toInt(), (16 * d).toInt(), (12 * d).toInt())
+            setSingleLine()
+            setBackgroundResource(R.drawable.bg_field)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
         }
-        androidx.appcompat.app.AlertDialog.Builder(this)
+        val wrap = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(8), dp(24), 0)
+            addView(input)
+        }
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
             .setTitle("重命名布局")
-            .setView(input)
+            .setView(wrap)
             .setPositiveButton("保存") { _, _ ->
                 val name = input.text.toString().trim()
                 if (name.isNotEmpty()) {
@@ -1701,6 +1799,12 @@ class MainActivity : AppCompatActivity() {
                     statusText.text = "已断开"
                     applyLinkState(LINK_ERR)
                 }
+                // 从未点击连接（冷启动 / 用户撤销后）：无会话，不提示中断、不提示重连
+                !sessionActive -> {
+                    statusText.text = getString(R.string.status_idle)
+                    applyLinkState(LINK_IDLE)
+                }
+                // 会话存在但处于后台：不显示重连横幅，回前台后由 onResume 续连
                 !resumed -> {
                     statusText.text = getString(R.string.status_idle)
                     applyLinkState(LINK_IDLE)
@@ -1759,7 +1863,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun scheduleReconnect(delayMs: Long = -1L) {
-        if (userStopped || !resumed) return
+        if (!sessionActive || userStopped || !resumed) return
         // 已有待执行的重连（隐式延时）就不再重置，否则看门狗会把任务无限推迟
         if (reconnectScheduled && delayMs < 0L) return
         uiHandler.removeCallbacks(reconnectTask)
@@ -1771,7 +1875,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun attemptReconnect() {
-        if (userStopped || !resumed || sender.isRunning) return
+        if (!sessionActive || userStopped || !resumed || sender.isRunning) return
         val host = ipInput.text.toString().trim()
         val port = portInput.text.toString().trim().toIntOrNull() ?: -1
         if (host.isEmpty() || port !in 1..65535) return
@@ -1786,7 +1890,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkLink() {
-        if (userStopped || !resumed) return
+        if (!sessionActive || userStopped || !resumed) return
         if (!sender.isRunning) {
             scheduleReconnect()
             return
@@ -1815,7 +1919,7 @@ class MainActivity : AppCompatActivity() {
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 uiHandler.post {
-                    if (!userStopped && resumed && !sender.isRunning) scheduleReconnect(500L)
+                    if (sessionActive && !userStopped && resumed && !sender.isRunning) scheduleReconnect(500L)
                 }
             }
         }
@@ -1847,11 +1951,16 @@ class MainActivity : AppCompatActivity() {
 
         prefs.edit().putString("ip", host).putInt("port", port).apply()
         userStopped = false
+        // 用户主动发起 → 会话成立，此后才允许断线提示与自动重连
+        sessionActive = true
         autoRetryCount = 0
         everGotReply = false
         lastReplyAt = 0L
         linkError = null
         uiHandler.removeCallbacks(reconnectTask)
+        // 取消待执行的重连必须同时清标志，否则 reconnectScheduled 永远为 true，
+        // 之后所有 scheduleReconnect(delay<0) 会被防抖判据直接丢弃 —— 链路再也无法自愈
+        reconnectScheduled = false
         // 会话开始：Wi-Fi 进入低延迟模式（自动重连间隔同样受益）
         try { wifiLock?.acquire() } catch (e: Exception) { }
         startSender(host, port)
@@ -1860,7 +1969,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun disconnect() {
         userStopped = true
+        // 用户主动撤销 → 会话结束，状态回到「未连接」，不再自动重连
+        sessionActive = false
         uiHandler.removeCallbacks(reconnectTask)
+        reconnectScheduled = false
         try { wifiLock?.release() } catch (e: Exception) { }
         sender.stop()
         sender.sendGoodbye()   // 告别包：PC 收到立即释放槽位，不等超时
@@ -2104,8 +2216,8 @@ class MainActivity : AppCompatActivity() {
         applyGyroState()
         uiHandler.removeCallbacks(watchdog)
         uiHandler.post(watchdog)
-        // 之前在后台断开的，回到前台立即补一次重连
-        if (!userStopped && !sender.isRunning) scheduleReconnect(500L)
+        // 会话仍在（用户之前主动连过、未断开）→ 回前台补一次重连；从未连过则什么都不做
+        if (sessionActive && !userStopped && !sender.isRunning) scheduleReconnect(500L)
         // 「未知来源安装」授权回来后，自动继续被暂挂的更新安装
         updateManager.onHostResume()
     }
@@ -2115,6 +2227,7 @@ class MainActivity : AppCompatActivity() {
         resumed = false
         uiHandler.removeCallbacks(watchdog)
         uiHandler.removeCallbacks(reconnectTask)
+        reconnectScheduled = false   // 同上：取消任务必须清标志，回前台才能重新排程
         // 切后台：输入回中 + 冻结陀螺仪（否则传感器持续驱动视角，放兜里会乱转）
         gamepadView.releaseAll()
         applyGyroState()

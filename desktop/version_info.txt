@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 1, 2, 0),
-    prodvers=(1, 1, 2, 0),
+    filevers=(1, 1, 3, 0),
+    prodvers=(1, 1, 3, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -17,12 +17,12 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'VirtualGamepad'),
             StringStruct('FileDescription', 'Virtual Gamepad PC Receiver (Portable)'),
-            StringStruct('FileVersion', '1.1.2.0'),
+            StringStruct('FileVersion', '1.1.3.0'),
             StringStruct('InternalName', 'VirtualGamepadReceiver'),
             StringStruct('LegalCopyright', 'MIT / GPL-3.0'),
             StringStruct('OriginalFilename', 'VirtualGamepadReceiver.exe'),
             StringStruct('ProductName', 'Virtual Gamepad PC Receiver'),
-            StringStruct('ProductVersion', '1.1.2.0')
+            StringStruct('ProductVersion', '1.1.3.0')
           ]
         )
       ]
