@@ -1,5 +1,12 @@
 pluginManagement {
     repositories {
+        // 国内镜像优先：2026-11-08 GitHub 的下载 CDN 大面积返回 504，
+        // 部分构件（如 kotlin-compiler-embeddable）解析时会被重定向到
+        // github.com 下载，导致 CI 在配置阶段直接失败。阿里云是全量代理，
+        // 放在最前面可绕开该链路；官方源保留作兜底。
+        maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
         google()
         mavenCentral()
         gradlePluginPortal()
@@ -9,6 +16,8 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
         google()
         mavenCentral()
     }
