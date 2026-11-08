@@ -33,6 +33,21 @@ jobs:
             exit 1
           fi
 
+      # 历史教训：v1.1.1 及更早的 build.gradle 没有 signingConfigs 段，
+      # 从那些标签构建出来的 APK 会被 AGP 用 debug 密钥签名，老用户装不上。
+      # 这里在构建前就拦住，给出明确原因，而不是等到发布后才发现。
+      - name: 校验构建脚本已声明正式签名
+        run: |
+          F=android/app/build.gradle
+          if ! grep -q "signingConfigs" "$F" || ! grep -q "signingConfig signingConfigs.release" "$F"; then
+            echo "::error::$F 未声明正式签名（缺 signingConfigs.release 或未在 release 中引用）。"
+            echo "::error::从该提交构建会得到 debug 签名的 APK，已装正式版的用户无法覆盖安装。"
+            echo "::error::v1.1.1 及更早的标签就属于这种情况，禁止用它们重新发版。"
+            echo "::error::请从包含正式签名配置的提交（v1.1.2 及以后）构建，或先补上签名配置。"
+            exit 1
+          fi
+          echo "已确认 release 构建使用正式签名配置"
+
       - name: 注入正式签名密钥（来自仓库 Secret）
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -82,6 +97,39 @@ jobs:
           cd android
           gradle assembleRelease --no-daemon --console=plain
 
+      # 硬闸门：不论配置怎么写、AGP 是否静默降级，只要证书不是正式那把就绝不发布。
+      # 正式证书指纹（vgamepad-release.keystore，CN=VirtualGamepad）
+      - name: 校验 APK 签名证书
+        run: |
+          set -euo pipefail
+          OUT=android/app/build/outputs/apk/release
+          APK=$(ls "$OUT"/*-release.apk 2>/dev/null | grep -v unsigned | head -1 || true)
+          test -n "$APK" || APK=$(ls "$OUT"/*.apk | head -1)
+          echo "待校验 APK: $APK"
+
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          APKSIGNER=$(ls "$SDK"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$APKSIGNER" ]; then
+            echo "未找到 apksigner，尝试安装 build-tools"
+            "$SDK/cmdline-tools/latest/bin/sdkmanager" "build-tools;35.0.0" >/dev/null 2>&1 || true
+            APKSIGNER=$(ls "$SDK"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1 || true)
+          fi
+          if [ ! -x "$APKSIGNER" ]; then
+            echo "::error::拿不到 apksigner，无法验证签名，拒绝发布（不能盲发）"
+            exit 1
+          fi
+
+          FP=$("$APKSIGNER" verify --print-certs "$APK" | grep -m1 "SHA-256 digest" | awk '{print $NF}')
+          EXPECT="23e9a21b2af4e257ccb5db7051ccc8d314b518e4504aed33d40122eda51f0435"
+          echo "APK 证书 SHA-256 : $FP"
+          echo "期望正式证书      : $EXPECT"
+          if [ "$FP" != "$EXPECT" ]; then
+            echo "::error::APK 签名证书不匹配（实际 $FP）。"
+            echo "::error::非正式签名的包发出去，已装用户无法覆盖安装，已阻止发布。"
+            exit 1
+          fi
+          echo "签名证书校验通过"
+
       - name: 计算 SHA-256、改名并准备发布文件
         run: |
           OUT=android/app/build/outputs/apk/release
@@ -98,11 +146,15 @@ jobs:
         with:
           name: ${{ github.ref_name }}
           generate_release_notes: true
+          # ⚠️ 严禁在本模板（以及任何 Release 描述）里写入「强制更新标记」的字面量。
+          # 手机端 UpdateManager 用 body.contains(FORCE_MARKER) 判定强制更新，
+          # 一旦命中：弹窗不可关闭、没有「暂不更新」、点外部也关不掉，用户会被卡死。
+          # 2026-11-08 曾因模板里带了一句开发提示而误触发，已清除；改动前请先读
+          # docs/自动更新系统-教程.md 的「发布前检查」一节。
           body: |
             ## ${{ github.ref_name }} 更新
 
             > 更新日志请编辑本 Release 的描述（手机端更新弹窗会显示这段文字）。
-            > 如需强制更新，在描述中加入 `[force]` 标记。
 
             安装包与 `.sha256` 校验文件见下方附件，手机端应用内更新会自动校验。
           files: |
