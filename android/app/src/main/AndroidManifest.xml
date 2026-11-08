@@ -10,6 +10,16 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- 触感反馈与游戏震动回传 -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 后台保活：会话期间用前台服务把进程固定在 FOREGROUND_SERVICE 重要性，
+         否则退到后台会变成 cached 进程被系统冻结（发送线程挂起 → PC 端 2 秒
+         槽位超时 → 显示断开）。connectedDevice 类型对应「与外设/主机相连」的场景 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- connectedDevice 类型的前置权限（系统要求至少具备其一） -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <!-- 常驻通知（Android 13+ 需运行时授权；拒绝也仍会保持连接，只是看不到通知） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 应用内自动更新：允许本应用调起系统安装器安装自己的新版本
          （Android 8.0+ 首次安装前用户仍需在系统界面确认「允许安装未知应用"） -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -34,6 +44,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 后台保活：会话期间常驻，持有 CPU / Wi-Fi 锁并显示连接状态通知 -->
+        <service
+            android:name=".LinkService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 
         <!-- 自动更新：向系统安装器安全共享已校验的 APK 文件（只读） -->
         <provider

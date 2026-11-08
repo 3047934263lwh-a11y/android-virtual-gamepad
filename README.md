@@ -68,7 +68,7 @@ PC 侧必然有驱动。好处是装完之后，任何走 XInput 的游戏都**�
 ```
 VirtualGamepadReceiver-Portable/
 ├─ VirtualGamepadReceiver.exe      PC 接收端（免安装，双击即运行）
-├─ 手机端/VirtualGamepad-v1.1.3.apk    手机 App
+├─ 手机端/VirtualGamepad-v1.1.4.apk    手机 App
 ├─ 可选驱动/ViGEmBusSetup_x64.msi           876 KB 离线驱动
 └─ 使用说明.txt
 ```

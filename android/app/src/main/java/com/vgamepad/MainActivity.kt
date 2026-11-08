@@ -1,14 +1,18 @@
 package com.vgamepad
 
 import android.content.Context
+import android.content.Intent
 import android.content.res.ColorStateList
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
+import android.os.PowerManager
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.graphics.Color
@@ -73,6 +77,10 @@ class MainActivity : AppCompatActivity() {
         const val LINK_ERR = 3
         /** 状态点直径（dp）。改这里即可，measureCollapsedWidth 与布局同源 */
         const val DOT_DP = 10
+        /** 看门狗空档判定阈值：正常 500ms 一拍。取 5s 而不是 2.5s ——
+         *  主线程跑一次重活（大布局、GC、APK 校验）也可能卡 2~3 秒，
+         *  阈值太低会把普通卡顿误报成「被系统冻结」 */
+        const val SUSPEND_GAP_MS = 5000L
     }
 
     private lateinit var gamepadView: GamepadView
@@ -154,11 +162,27 @@ class MainActivity : AppCompatActivity() {
     }
     private val watchdog = object : Runnable {
         override fun run() {
+            // 没有任何会话又在后台：停拍（onResume 会重新起）。
+            // 否则断开连接后把应用丢在后台，会一直以 500ms 频率空转唤醒 CPU。
+            if (!sessionActive && !resumed) return
+            val now = SystemClock.uptimeMillis()
+            val gap = if (lastWatchdogTick == 0L) 0L else now - lastWatchdogTick
+            lastWatchdogTick = now
+            // 看门狗 500ms 一拍。空档超过 SUSPEND_GAP_MS（5s）只可能是进程被
+            // 系统整体挂起（厂商冻结/深度睡眠）：发送线程同样停摆，PC 端 2 秒
+            // 槽位早已释放。立即重建链路，并把「为什么断」告诉用户。
+            if (gap > SUSPEND_GAP_MS && sessionActive) onProcessSuspended(gap)
             checkLink()
             renderStatus()          // 定时刷新，保证兜底超时后状态栏及时归零
             uiHandler.postDelayed(this, WATCHDOG_MS)
         }
     }
+
+    private var lastWatchdogTick = 0L
+    /** 最近一次检测到的进程挂起时长（0 = 没有） */
+    private var pendingFreezeSec = 0L
+    /** 同一次启动只解释一次，避免每次切后台都弹窗 */
+    private var freezeGuideShown = false
 
     private var lastRumbleAt = 0L
     private var lastRumbleAmp = -1
@@ -1790,8 +1814,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 状态栏单一数据源：连接态、错误、重连提示、pps、玩家号只在这里渲染 */
+    /** 状态栏单一数据源：连接态、错误、重连提示、pps、玩家号只在这里渲染；
+     *  同时把结果同步到保活服务的常驻通知（后台时那是唯一的可见入口） */
     private fun renderStatus() {
+        renderStatusCore()
+        syncNotification()
+    }
+
+    private fun renderStatusCore() {
         if (!sender.isRunning) {
             when {
                 // 用户主动点了「断开」→ 红色「已断开」，与连接中的绿色形成明显反差
@@ -1804,11 +1834,8 @@ class MainActivity : AppCompatActivity() {
                     statusText.text = getString(R.string.status_idle)
                     applyLinkState(LINK_IDLE)
                 }
-                // 会话存在但处于后台：不显示重连横幅，回前台后由 onResume 续连
-                !resumed -> {
-                    statusText.text = getString(R.string.status_idle)
-                    applyLinkState(LINK_IDLE)
-                }
+                // 会话存在但未连通：无论前后台都显示重连提示。
+                // 后台有 LinkService 托底，重连同样在进行，不需要再区分前后台
                 else -> {
                     statusText.text = "连接中断，正在自动重连…"
                     applyLinkState(LINK_WARN)
@@ -1844,6 +1871,16 @@ class MainActivity : AppCompatActivity() {
         portInput.isEnabled = true
     }
 
+    /** 把状态栏文案镜像到常驻通知；仅在文字变化时刷新，避免每秒无谓 notify */
+    private var lastNotifText: String? = null
+    private fun syncNotification() {
+        if (!sessionActive) return
+        val t = statusText.text?.toString() ?: return
+        if (t == lastNotifText) return
+        lastNotifText = t
+        LinkService.updateStatus(t)
+    }
+
     /** 收到任何 PC 回包 = 链路确实活着（VGPP 每秒下发，VGPR 震动回传） */
     private fun markReply() {
         lastReplyAt = SystemClock.uptimeMillis()
@@ -1863,19 +1900,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun scheduleReconnect(delayMs: Long = -1L) {
-        if (!sessionActive || userStopped || !resumed) return
+        if (!sessionActive || userStopped) return
         // 已有待执行的重连（隐式延时）就不再重置，否则看门狗会把任务无限推迟
         if (reconnectScheduled && delayMs < 0L) return
         uiHandler.removeCallbacks(reconnectTask)
         val backoff = 2000L shl (autoRetryCount.coerceAtMost(3))
-        val d = if (delayMs >= 0) delayMs else backoff.coerceAtMost(15000L)
+        // 后台没有回包时不必按前台的节奏猛试：上限从 15s 放宽到 30s，
+        // 减少长期挂后台的唤醒次数（回到前台时 onResume 会立刻补一次 500ms 重连）
+        val cap = if (resumed) 15000L else 30000L
+        val d = if (delayMs >= 0) delayMs else backoff.coerceAtMost(cap)
         reconnectScheduled = true
         uiHandler.postDelayed(reconnectTask, d)
         renderStatus()
     }
 
     private fun attemptReconnect() {
-        if (!sessionActive || userStopped || !resumed || sender.isRunning) return
+        if (!sessionActive || userStopped || sender.isRunning) return
         val host = ipInput.text.toString().trim()
         val port = portInput.text.toString().trim().toIntOrNull() ?: -1
         if (host.isEmpty() || port !in 1..65535) return
@@ -1890,7 +1930,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkLink() {
-        if (!sessionActive || userStopped || !resumed) return
+        if (!sessionActive || userStopped) return
         if (!sender.isRunning) {
             scheduleReconnect()
             return
@@ -1919,7 +1959,7 @@ class MainActivity : AppCompatActivity() {
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 uiHandler.post {
-                    if (sessionActive && !userStopped && resumed && !sender.isRunning) scheduleReconnect(500L)
+                    if (sessionActive && !userStopped && !sender.isRunning) scheduleReconnect(500L)
                 }
             }
         }
@@ -1965,6 +2005,9 @@ class MainActivity : AppCompatActivity() {
         try { wifiLock?.acquire() } catch (e: Exception) { }
         startSender(host, port)
         applyGyroState()
+        // 会话成立 → 拉起保活前台服务：进程不再被当作 cached 进程冻结，
+        // 息屏后 CPU / Wi-Fi 也保持活跃，退到后台不会因为线程被挂起而断连
+        LinkService.start(this)
     }
 
     private fun disconnect() {
@@ -1974,6 +2017,7 @@ class MainActivity : AppCompatActivity() {
         uiHandler.removeCallbacks(reconnectTask)
         reconnectScheduled = false
         try { wifiLock?.release() } catch (e: Exception) { }
+        LinkService.stop(this)
         sender.stop()
         sender.sendGoodbye()   // 告别包：PC 收到立即释放槽位，不等超时
         gamepadView.releaseAll()
@@ -1982,6 +2026,7 @@ class MainActivity : AppCompatActivity() {
         everGotReply = false
         linkError = null
         autoRetryCount = 0
+        lastNotifText = null
         applyGyroState()
         resetConnectUi()
         renderStatus()
@@ -2214,10 +2259,19 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         resumed = true
         applyGyroState()
+        // 回前台要把看门狗基准清零：否则「后台被挂起的那段空档」会被算到这一拍上
+        lastWatchdogTick = 0
         uiHandler.removeCallbacks(watchdog)
         uiHandler.post(watchdog)
-        // 会话仍在（用户之前主动连过、未断开）→ 回前台补一次重连；从未连过则什么都不做
-        if (sessionActive && !userStopped && !sender.isRunning) scheduleReconnect(500L)
+        // 会话仍在（用户之前主动连过、未断开）→ 补一次重连 + 重新拉起保活服务。
+        // 服务必须在这里补：Activity 因换主题/内存回收重建时，onDestroy 已经把服务停掉，
+        // 若只在 connect() 里启动，重建后链路能连上但后台保活静默失效。
+        if (sessionActive && !userStopped) {
+            LinkService.start(this)
+            if (!sender.isRunning) scheduleReconnect(500L)
+        }
+        // 后台被系统挂起过的话，回来后给出原因与放行方式（同一次启动只解释一次）
+        maybeShowFreezeGuide()
         // 「未知来源安装」授权回来后，自动继续被暂挂的更新安装
         updateManager.onHostResume()
     }
@@ -2225,9 +2279,10 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         resumed = false
-        uiHandler.removeCallbacks(watchdog)
-        uiHandler.removeCallbacks(reconnectTask)
-        reconnectScheduled = false   // 同上：取消任务必须清标志，回前台才能重新排程
+        // 关键：这里不再取消 watchdog / reconnectTask。
+        // 会话期间有 LinkService 前台服务托底，进程不会被冻结，后台仍必须让看门狗
+        // 巡检并自动重连；一旦在这里停掉，后台丢一次包就只能等回前台才恢复，
+        // 表现正是「退到后台就断开」。看门狗只在 onDestroy 才撤。
         // 切后台：输入回中 + 冻结陀螺仪（否则传感器持续驱动视角，放兜里会乱转）
         gamepadView.releaseAll()
         applyGyroState()
@@ -2244,6 +2299,7 @@ class MainActivity : AppCompatActivity() {
         }
         networkCallback = null
         try { wifiLock?.release() } catch (e: Exception) { }
+        LinkService.stop(this)   // 会话结束 → 撤下保活通知、释放 CPU/Wi-Fi 锁
         sender.stop()
         resumed = false
         gyroAim?.stop()   // 注销传感器监听，避免泄漏
@@ -2261,6 +2317,72 @@ class MainActivity : AppCompatActivity() {
             g.stop()
             gamepadView.state.gyroRx = 0
             gamepadView.state.gyroRy = 0
+        }
+    }
+
+    /**
+     * 进程被系统挂起过（厂商冻结 / 深度睡眠）。挂起期间发送线程完全停摆，
+     * 无论前台服务与唤醒锁是否存在都无法发包 —— 这是系统省电策略，应用层绕不过去。
+     * 这里只做两件事：立刻重建链路；把原因和放行方式明确告诉用户。
+     */
+    private fun onProcessSuspended(gapMs: Long) {
+        if (!userStopped && sessionActive && !sender.isRunning) scheduleReconnect(300L)
+        pendingFreezeSec = (gapMs / 1000).coerceAtLeast(1)
+        maybeShowFreezeGuide()
+    }
+
+    private fun maybeShowFreezeGuide() {
+        // 只在用户看得见界面时弹，后台弹窗会被系统拦截且打扰
+        if (!resumed || pendingFreezeSec <= 0L) return
+        if (freezeGuideShown) {
+            pendingFreezeSec = 0
+            return
+        }
+        freezeGuideShown = true
+        val sec = pendingFreezeSec
+        pendingFreezeSec = 0
+        if (isFinishing || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && isDestroyed)) return
+        val app = getString(R.string.app_name)
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("后台连接被系统冻结")
+            .setMessage(
+                "检测到本应用在后台被系统整体挂起了 ${sec} 秒。挂起期间发送线程完全停止，" +
+                    "电脑端 2 秒收不到数据就会释放手柄槽位，于是显示断开。\n\n" +
+                    "这是手机厂商的省电策略，前台服务与锁都拦不住，必须手动放行一次：\n\n" +
+                    "① 设置 → 电池 → 后台耗电管理 → 找到「$app」→ 允许后台高耗电\n" +
+                    "② i管家 → 应用管理 → 自启动管理 → 允许「$app」\n" +
+                    "③ 最近任务里下拉本应用卡片，出现锁图标（锁定后台）\n\n" +
+                    "放行后，锁屏与切后台都能保持连接；未放行时回到应用会自动重连。"
+            )
+            .setPositiveButton("去电池设置") { _, _ -> openBatterySettings() }
+            .setNeutralButton("应用详情") { _, _ -> openAppDetails() }
+            .setNegativeButton("知道了", null)
+            .show()
+    }
+
+    private fun openBatterySettings() {
+        val list = listOf(
+            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+            Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS),
+            Intent(Settings.ACTION_SETTINGS)
+        )
+        for (i in list) {
+            try {
+                startActivity(i)
+                return
+            } catch (e: Exception) {
+            }
+        }
+        toast("请在系统设置中允许本应用后台运行")
+    }
+
+    private fun openAppDetails() {
+        try {
+            startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+            )
+        } catch (e: Exception) {
+            toast("请手动在系统设置中找到本应用")
         }
     }
 

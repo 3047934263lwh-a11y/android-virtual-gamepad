@@ -16,4 +16,8 @@
     <string name="edit_reset_all">全部还原</string>
     <string name="edit_done">完成</string>
     <string name="edit_seek_desc">按键大小或透明度调节滑杆</string>
+    <string name="link_channel_name">后台保持连接</string>
+    <string name="link_channel_desc">保持手柄到电脑的连接，避免退到后台被系统断开</string>
+    <string name="link_notif_title">虚拟手柄 · 正在保持连接</string>
+    <string name="link_notif_text">连接进行中，请勿在系统中清理本应用</string>
 </resources>
